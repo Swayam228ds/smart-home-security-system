@@ -1,0 +1,7 @@
+ven/
+__pycache__/
+.pytest_cache/
+data/
+*.db
+*.sqlite
+*.onnx
