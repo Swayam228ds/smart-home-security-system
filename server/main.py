@@ -99,9 +99,15 @@ async def lifespan(app: FastAPI):
         owner_manager=owner_manager,
     )
 
+    from server.audio.esp32_receiver import esp32_receiver
+
     # 4. Initialize audio pipeline (loads VAD, STT, TTS models)
     logger.info("Loading ML models (VAD, Whisper, Piper)...")
     pipeline = AudioPipeline(conversation_manager)
+
+    # 5. Start ESP32 UDP receiver task
+    logger.info("Starting ESP32 UDP Receiver on port 5005...")
+    asyncio.create_task(esp32_receiver.start_listening())
 
     startup_elapsed = time.time() - startup_start
     logger.info(f"All systems ready in {startup_elapsed:.1f}s")
@@ -339,6 +345,57 @@ async def test_audio_upload(file: UploadFile = File(...)):
         },
     )
 
+@app.post("/api/test/esp32/start", summary="Start recording from ESP32")
+async def esp32_start_recording():
+    from server.audio.esp32_receiver import esp32_receiver
+    esp32_receiver.start_recording()
+    return {"status": "recording"}
+
+@app.post("/api/test/esp32/stop", summary="Stop recording from ESP32 and process")
+async def esp32_stop_recording():
+    from server.audio.esp32_receiver import esp32_receiver
+    pcm_data = esp32_receiver.stop_recording()
+    
+    if not conversation_manager.is_session_active() or len(pcm_data) < 100:
+        if not conversation_manager.is_session_active():
+            await conversation_manager.start_session()
+            pipeline.reset()
+            
+        # Return greeting if empty or new session
+        greeting_audio = b""
+        async for sentence in conversation_manager.process_input(""):
+            greeting_pcm = pipeline.tts.synthesize(sentence)
+            greeting_audio += greeting_pcm
+            
+        response_wav = _pcm_to_wav(greeting_audio)
+        return Response(
+            content=response_wav,
+            media_type="audio/wav",
+            headers={
+                "Content-Disposition": "attachment; filename=greeting.wav",
+                "X-Session-Active": "True",
+                "X-Session-State": "GREETING",
+            },
+        )
+
+    # Process through pipeline
+    response_pcm, transcript = await pipeline.process_full_audio(pcm_data)
+    response_wav = _pcm_to_wav(response_pcm)
+    safe_transcript = transcript.encode('ascii', 'ignore').decode('ascii') if transcript else ""
+
+    return Response(
+        content=response_wav,
+        media_type="audio/wav",
+        headers={
+            "Content-Disposition": "attachment; filename=response.wav",
+            "X-Session-Active": str(conversation_manager.is_session_active()),
+            "X-Session-State": (
+                conversation_manager.current_session.state.name
+                if conversation_manager.current_session else "NONE"
+            ),
+            "X-Transcript": safe_transcript
+        },
+    )
 
 @app.post("/api/test/text", summary="Send text input for testing")
 async def test_text_input(text: str):

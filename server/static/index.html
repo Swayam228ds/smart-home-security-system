@@ -444,7 +444,13 @@
                     </svg>
                 </button>
                 <div class="mic-label" id="mic-label">Click to start recording</div>
-                <div class="mic-hint">Or type a message below</div>
+                <div style="margin-top: 15px;">
+                    <select id="mic-selector" class="text-input" style="width: auto; padding: 5px; cursor: pointer;">
+                        <option value="laptop">Laptop Mic</option>
+                        <option value="esp32">ESP32 Mic (USB Serial)</option>
+                    </select>
+                </div>
+                <div class="mic-hint" style="margin-top: 10px;">Or type a message below</div>
             </div>
 
             <!-- Text Input -->
@@ -650,6 +656,20 @@
 
         async function startRecording() {
             try {
+                const micType = document.getElementById('mic-selector').value;
+                if (micType === 'esp32') {
+                    // Start ESP32 UDP recording on the backend
+                    await fetch(`${API}/api/test/esp32/start`, { method: 'POST' });
+                    isRecording = true;
+                    
+                    const btn = document.getElementById('mic-btn');
+                    btn.classList.add('recording');
+                    document.getElementById('mic-label').textContent = 'Recording from ESP32... Click to stop';
+                    setDot('dot-mic', 'active');
+                    document.getElementById('status-mic').textContent = 'Mic: ESP32 active';
+                    return;
+                }
+
                 const stream = await navigator.mediaDevices.getUserMedia({
                     audio: {
                         sampleRate: 16000,
@@ -688,7 +708,23 @@
             }
         }
 
-        function stopRecording() {
+        async function stopRecording() {
+            const micType = document.getElementById('mic-selector').value;
+            
+            if (micType === 'esp32') {
+                isRecording = false;
+                const btn = document.getElementById('mic-btn');
+                btn.classList.remove('recording');
+                btn.classList.add('processing');
+                document.getElementById('mic-label').textContent = 'Processing ESP32 Audio...';
+                setDot('dot-mic', 'warning');
+                document.getElementById('status-mic').textContent = 'Mic: processing';
+                
+                // Fetch the recorded audio and process it
+                await processEsp32Audio();
+                return;
+            }
+
             if (mediaRecorder && mediaRecorder.state !== 'inactive') {
                 mediaRecorder.stop();
             }
@@ -750,6 +786,44 @@
                 await refreshStatus();
             } catch (e) {
                 addSystemMsg('Error processing audio: ' + e.message);
+            } finally {
+                const btn = document.getElementById('mic-btn');
+                btn.classList.remove('processing');
+                document.getElementById('mic-label').textContent = 'Click to start recording';
+                setDot('dot-mic', '');
+                document.getElementById('status-mic').textContent = 'Mic: off';
+            }
+        }
+
+        async function processEsp32Audio() {
+            try {
+                const res = await fetch(`${API}/api/test/esp32/stop`, {
+                    method: 'POST',
+                });
+
+                if (res.ok) {
+                    const transcript = res.headers.get('X-Transcript');
+                    if (transcript) {
+                        addVisitorMsg('🎙 ' + transcript);
+                    } else {
+                        addVisitorMsg('🎙 [Audio from ESP32]');
+                    }
+
+                    const audioResponseBlob = await res.blob();
+                    const audioUrl = URL.createObjectURL(audioResponseBlob);
+                    addAssistantMsgWithAudio('', audioUrl);
+
+                    // Auto-play response
+                    const audio = new Audio(audioUrl);
+                    audio.play().catch(() => {});
+                } else {
+                    const errText = await res.text();
+                    addSystemMsg('Server error: ' + errText);
+                }
+
+                await refreshStatus();
+            } catch (e) {
+                addSystemMsg('Error processing ESP32 audio: ' + e.message);
             } finally {
                 const btn = document.getElementById('mic-btn');
                 btn.classList.remove('processing');

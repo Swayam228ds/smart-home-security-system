@@ -55,6 +55,7 @@ class ConversationManager:
         if self.current_session:
             if (datetime.utcnow() - self.current_session.last_activity).total_seconds() > self.timeout_seconds:
                 logger.info(f"Session {self.current_session.session_id} timed out.")
+                self._log_conversation()
                 self.current_session = None
 
     async def end_session(self) -> None:
@@ -91,19 +92,34 @@ class ConversationManager:
             from server.database.session import async_session
             from server.database.models import VisitLog
             
+            # Capture variables locally since self.current_session will be None soon
+            session_id = self.current_session.session_id
+            visitor_name = self.current_session.visitor_name
+            visitor_purpose = self.current_session.visitor_purpose
+            status = self.current_session.state.name
+            
+            # Create a deep copy of the messages so it isn't mutated
+            import copy
+            messages = copy.deepcopy(self.current_session.messages)
+            created_at = self.current_session.created_at
+            
             async def save_to_db():
-                async with async_session() as session:
-                    log = VisitLog(
-                        session_id=self.current_session.session_id,
-                        visitor_name=self.current_session.visitor_name,
-                        visitor_purpose=self.current_session.visitor_purpose,
-                        status=self.current_session.state.name,
-                        messages=self.current_session.messages,
-                        created_at=self.current_session.created_at,
-                        ended_at=datetime.utcnow()
-                    )
-                    session.add(log)
-                    await session.commit()
+                try:
+                    async with async_session() as session:
+                        log = VisitLog(
+                            session_id=session_id,
+                            visitor_name=visitor_name,
+                            visitor_purpose=visitor_purpose,
+                            status=status,
+                            messages=messages,
+                            created_at=created_at,
+                            ended_at=datetime.utcnow()
+                        )
+                        session.add(log)
+                        await session.commit()
+                        logger.info(f"Session {session_id} saved to DB.")
+                except Exception as db_e:
+                    logger.error(f"DB insert failed: {db_e}")
             
             # Run in the background
             loop = asyncio.get_event_loop()
