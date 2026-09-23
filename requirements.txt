@@ -1,0 +1,12 @@
+# Core framework
+fastapi>=0.100.0
+uvicorn[standard]>=0.23.0
+
+# Computer vision + webcam
+opencv-python>=4.8.0
+
+# YOLOv8 human detection (downloads yolov8n.pt ~6 MB on first run)
+ultralytics>=8.0.0
+
+# MediaPipe face detection
+mediapipe>=0.10.0

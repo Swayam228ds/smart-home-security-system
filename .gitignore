@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+venv/
+.venv/
+env/
+
+# Database & Runtime Data
+security.db
+security.db-journal
+security.db-wal
+security.db-shm
+
+# Captured Visitor Images (Keep folder structure, ignore actual photos)
+images/*
+!images/.gitkeep
+
+# Large / auto-downloaded model checkpoints (optional, auto-downloaded on start)
+# yolov8n.pt
+
+# Logs & IDE
+smart-home-security-demo-main/
+*.log
+.vscode/
+.idea/
+.DS_Store
