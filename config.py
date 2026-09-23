@@ -42,7 +42,7 @@ FACE_MIN_HEIGHT_RATIO       = 0.15  # Minimum face box height relative to webcam
 FACE_CENTER_TOLERANCE       = 0.25  # Max allowed normalized offset from frame center
 FACE_EDGE_MARGIN            = 0.05  # Minimum distance from frame boundaries (0.0 to 0.5)
 FACE_STABLE_FRAMES          = 5     # Consecutive frames meeting criteria before capture
-FACE_CAPTURE_TIMEOUT_SECS   = 10    # Max seconds to wait for suitable face
+FACE_CAPTURE_TIMEOUT_SECS   = 30    # Max seconds to wait for suitable face
 FALLBACK_CAPTURE_ON_TIMEOUT = True  # If True, save best frame available on timeout
 
 # ─── Multi-Face & Cropping Settings ──────────────────────────────────────────

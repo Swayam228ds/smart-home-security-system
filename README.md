@@ -69,8 +69,8 @@ Ensures the face is reasonably centered in the webcam's optical sweet spot. If t
 ### 7. Stability Requirement (`FACE_STABLE_FRAMES = 5`)
 Capturing the first instant a face passes the threshold risks motion blur if the visitor is still moving. The stability gate requires that the face passes **all** quality gates for $5$ consecutive frames. If the visitor moves out of range or turns away, the stability counter resets to zero.
 
-### 8. Capture Timeout & Fallback (`FACE_CAPTURE_TIMEOUT_SECS = 10`)
-If a human is detected but no suitable face is detected within 10 seconds (e.g., visitor is wearing a helmet or looking away):
+### 8. Capture Timeout & Fallback (`FACE_CAPTURE_TIMEOUT_SECS = 30`)
+If a human is detected but no suitable face is detected within 30 seconds (e.g., visitor is wearing a helmet or looking away):
 - The state machine does not hang indefinitely.
 - It records the visit with `capture_status = "timeout"`.
 - If `FALLBACK_CAPTURE_ON_TIMEOUT = True`, it saves the best candidate frame observed so far so security operators still have a visual record.
