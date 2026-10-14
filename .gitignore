@@ -27,3 +27,6 @@ smart-home-security-demo-main/
 .vscode/
 .idea/
 .DS_Store
+
+# Auto-downloaded face recognition models (YuNet + SFace, ~37 MB)
+*.onnx
