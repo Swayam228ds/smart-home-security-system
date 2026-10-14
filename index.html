@@ -305,20 +305,44 @@
 <header>
   <span class="logo">🏠</span>
   <h1>Smart Home Security</h1>
-  <span class="sub">Laptop Webcam Edition — YOLOv8 + MediaPipe Gating</span>
+  <span class="sub">ESP32-CAM & Laptop Webcam — YOLOv8 + MediaPipe Gating</span>
 </header>
 
 <div class="container">
 
-  <!-- Helpful tip banner with direct button -->
-  <div class="webcam-banner" id="webcam-tip-banner">
-    <div class="webcam-banner-left">
-      <span class="icon">📷</span>
-      <span><strong>Laptop Camera:</strong> Click <em>Turn ON Laptop Webcam</em> below to activate your laptop's camera directly in your browser. Live frames will be evaluated by YOLOv8 and MediaPipe in real time.</span>
+  <!-- Camera Source Selector Banner -->
+  <div class="webcam-banner" id="camera-config-banner" style="display:flex; flex-direction:column; gap:12px; align-items:stretch;">
+    <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+      <div class="webcam-banner-left">
+        <span class="icon">📷</span>
+        <div>
+          <strong id="active-cam-title">Active Camera: ESP32-CAM (Wi-Fi MJPEG)</strong>
+          <div style="font-size: 0.75rem; color: #8b949e; margin-top: 2px;">
+            Primary Video Source | Processed with YOLOv8 & MediaPipe Face Quality Gate
+          </div>
+        </div>
+      </div>
+      
+      <!-- Source Switcher Buttons -->
+      <div style="display:flex; gap:8px;">
+        <button id="btn-src-esp32" class="btn btn-blue" onclick="switchCameraSource('esp32')">
+          📷 ESP32-CAM
+        </button>
+        <button id="btn-src-webcam" class="btn btn-gray" onclick="switchCameraSource('webcam')">
+          💻 Laptop Webcam
+        </button>
+      </div>
     </div>
-    <button class="btn btn-green btn-lg" onclick="toggleDirectWebcam()" id="btn-banner-toggle">
-      ▶ Turn ON Laptop Webcam
-    </button>
+
+    <!-- ESP32 Configuration Controls -->
+    <div id="esp32-settings-row" style="display:flex; align-items:center; gap:10px; flex-wrap:wrap; background:#161b22; padding:10px 14px; border-radius:6px; border:1px solid #30363d;">
+      <label for="esp32-url-input" style="font-size:0.82rem; font-weight:600; color:#58a6ff;">ESP32 Stream URL:</label>
+      <input type="text" id="esp32-url-input" placeholder="e.g. http://192.168.1.50:81/stream" value="http://192.168.1.50:81/stream"
+             style="flex:1; min-width:240px; padding:6px 10px; border-radius:6px; border:1px solid #30363d; background:#0d1117; color:#e6edf3; font-size:0.85rem;">
+      <button class="btn btn-green" onclick="applyEsp32Url()">🔗 Connect ESP32</button>
+      <button class="btn btn-gray" onclick="testDirectEsp32Stream()">🌐 Open Stream in Tab</button>
+      <span id="esp32-conn-pill" class="badge yellow">Connecting…</span>
+    </div>
   </div>
 
   <!-- ── Top row: camera + status ────────────────────────────────────────── -->
@@ -327,22 +351,30 @@
     <!-- Live Camera Feed -->
     <div class="card">
       <h2>
-        <span>📷 Live Laptop Webcam Feed</span>
-        <span id="cam-status-pill" class="badge yellow">Waiting for activation</span>
+        <span id="feed-card-title">📷 Live ESP32-CAM Security Stream</span>
+        <span id="cam-status-pill" class="badge yellow">Connecting…</span>
       </h2>
       <div class="feed-wrapper">
-        <span class="feed-placeholder" id="feed-loader">Connecting to webcam…</span>
-        <img id="live-feed" src="/video_feed" alt="Live laptop webcam feed"
+        <span class="feed-placeholder" id="feed-loader">Connecting to camera…</span>
+        <img id="live-feed" src="/video_feed" alt="Live security camera feed"
              onload="document.getElementById('feed-loader').style.display='none'" />
       </div>
 
       <div class="feed-controls">
-        <button id="btn-webcam-toggle" class="btn btn-green btn-lg" onclick="toggleDirectWebcam()">
-          ▶ Turn ON Laptop Webcam
-        </button>
-        <span id="webcam-mode-text" style="font-size:0.82rem; color:#8b949e;">
-          Click to start live webcam detection
-        </span>
+        <div id="webcam-controls" style="display:none; width:100%;">
+          <button id="btn-webcam-toggle" class="btn btn-green btn-lg" onclick="toggleDirectWebcam()">
+            ▶ Turn ON Laptop Webcam
+          </button>
+          <span id="webcam-mode-text" style="font-size:0.82rem; color:#8b949e; margin-left:10px;">
+            Click to start live webcam detection
+          </span>
+        </div>
+        <div id="esp32-controls" style="display:flex; align-items:center; gap:10px; width:100%; flex-wrap:wrap;">
+          <button class="btn btn-gray" onclick="refreshFeed()">🔄 Reconnect Stream</button>
+          <span id="esp32-mode-text" style="font-size:0.82rem; color:#8b949e;">
+            Continuous Wi-Fi stream ingested by YOLOv8n + MediaPipe
+          </span>
+        </div>
       </div>
     </div>
 
@@ -426,6 +458,7 @@
         <tr>
           <th>Visit ID</th>
           <th>Timestamp</th>
+          <th>Name</th>
           <th>Humans</th>
           <th>Face Details</th>
           <th>Capture Status</th>
@@ -449,6 +482,12 @@
     <img id="modal-img" src="" alt="Captured visitor frame" />
     <div class="modal-meta" id="modal-meta">
       <div id="modal-meta-text"></div>
+      
+      <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
+        <input type="text" id="modal-name-input" placeholder="Enter name..." style="padding: 6px; border-radius: 4px; border: 1px solid #30363d; background: #0d1117; color: #c9d1d9;">
+        <button class="btn btn-green" id="btn-save-name">Save Name</button>
+      </div>
+
       <div class="face-thumb-wrap">
         <span style="font-size:0.75rem; color:#8b949e;">Face Crop:</span>
         <img id="modal-face-thumb" class="face-thumb" src="" alt="Face crop" />
@@ -463,8 +502,122 @@
   let processingFrame = false;
   let frameTimer = null;
   let lastCapturedVisitId = null;
+  let currentCameraSource = 'esp32';
+  let esp32StreamUrl = localStorage.getItem('esp32_cam_url') || 'http://192.168.1.50/stream';
 
-  // ── Auto-refresh visits table every 2 seconds ──────────────────────────────
+  // ── Initialize Camera Source & Settings on Load ────────────────────────────
+  document.addEventListener('DOMContentLoaded', async () => {
+    const urlInput = document.getElementById('esp32-url-input');
+    if (urlInput) urlInput.value = esp32StreamUrl;
+    await fetchCameraConfig();
+  });
+
+  async function fetchCameraConfig() {
+    try {
+      const res = await fetch('/api/camera/config');
+      if (res.ok) {
+        const data = await res.json();
+        currentCameraSource = data.source || 'esp32';
+        if (data.esp32_url) {
+          esp32StreamUrl = data.esp32_url;
+          const urlInput = document.getElementById('esp32-url-input');
+          if (urlInput) urlInput.value = esp32StreamUrl;
+          localStorage.setItem('esp32_cam_url', esp32StreamUrl);
+        }
+        applySourceUI(currentCameraSource);
+      }
+    } catch (e) {
+      console.warn('Could not fetch camera config:', e);
+    }
+  }
+
+  function applySourceUI(source) {
+    currentCameraSource = source;
+    const btnEsp = document.getElementById('btn-src-esp32');
+    const btnWeb = document.getElementById('btn-src-webcam');
+    const espRow = document.getElementById('esp32-settings-row');
+    const espControls = document.getElementById('esp32-controls');
+    const webControls = document.getElementById('webcam-controls');
+    const title = document.getElementById('active-cam-title');
+    const feedTitle = document.getElementById('feed-card-title');
+
+    if (source === 'esp32') {
+      btnEsp.className = 'btn btn-blue';
+      btnWeb.className = 'btn btn-gray';
+      if (espRow) espRow.style.display = 'flex';
+      if (espControls) espControls.style.display = 'flex';
+      if (webControls) webControls.style.display = 'none';
+      if (title) title.textContent = 'Active Camera: ESP32-CAM (Wi-Fi MJPEG)';
+      if (feedTitle) feedTitle.textContent = '📷 Live ESP32-CAM Security Stream';
+    } else {
+      btnEsp.className = 'btn btn-gray';
+      btnWeb.className = 'btn btn-blue';
+      if (espRow) espRow.style.display = 'none';
+      if (espControls) espControls.style.display = 'none';
+      if (webControls) webControls.style.display = 'block';
+      if (title) title.textContent = 'Active Camera: Laptop Webcam (DirectShow)';
+      if (feedTitle) feedTitle.textContent = '📷 Live Laptop Webcam Feed';
+    }
+  }
+
+  async function switchCameraSource(source) {
+    applySourceUI(source);
+    try {
+      const res = await fetch('/api/camera/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: source, esp32_url: esp32StreamUrl })
+      });
+      if (res.ok) {
+        refreshFeed();
+      }
+    } catch (e) {
+      console.error('Error switching camera source:', e);
+    }
+  }
+
+  async function applyEsp32Url() {
+    const urlInput = document.getElementById('esp32-url-input');
+    if (!urlInput || !urlInput.value.trim()) return;
+    esp32StreamUrl = urlInput.value.trim();
+    localStorage.setItem('esp32_cam_url', esp32StreamUrl);
+
+    const pill = document.getElementById('esp32-conn-pill');
+    if (pill) {
+      pill.textContent = 'Reconnecting…';
+      pill.className = 'badge yellow';
+    }
+
+    try {
+      const res = await fetch('/api/camera/configure', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: 'esp32', esp32_url: esp32StreamUrl })
+      });
+      if (res.ok) {
+        refreshFeed();
+      }
+    } catch (e) {
+      alert('Failed to connect to ESP32: ' + e.message);
+    }
+  }
+
+  function testDirectEsp32Stream() {
+    const urlInput = document.getElementById('esp32-url-input');
+    const url = urlInput ? urlInput.value.trim() : esp32StreamUrl;
+    if (url) {
+      window.open(url, '_blank');
+    }
+  }
+
+  function refreshFeed() {
+    const feed = document.getElementById('live-feed');
+    if (feed) {
+      feed.src = '/video_feed?t=' + Date.now();
+    }
+  }
+
+  // ── Auto-refresh visits table and status every 2 seconds ───────────────────
   setInterval(() => {
     if (!directStream) loadStatus();
     loadVisits();
@@ -635,17 +788,27 @@
 
       const cb = document.getElementById('cam-source-badge');
       const pill = document.getElementById('cam-status-pill');
-      if (d.camera === 'running') {
-        if (d.webcam_connected) {
-          cb.textContent = `Webcam (Idx ${d.active_camera_index ?? 0})`;
-          cb.className = 'badge green';
-          pill.textContent = 'Active (Native)';
-          pill.className = 'badge green';
+      const espPill = document.getElementById('esp32-conn-pill');
+      const isEsp32 = (d.camera_source === 'esp32');
+      const isConnected = (d.camera_connected || d.webcam_connected);
+
+      if (isEsp32) {
+        if (isConnected) {
+          if (cb) { cb.textContent = 'ESP32-CAM (Online)'; cb.className = 'badge green'; }
+          if (pill) { pill.textContent = 'Live (ESP32-CAM)'; pill.className = 'badge green'; }
+          if (espPill) { espPill.textContent = '🟢 Online'; espPill.className = 'badge green'; }
         } else {
-          cb.textContent = 'Waiting for activation';
-          cb.className = 'badge yellow';
-          pill.textContent = 'Click "Turn ON" Below';
-          pill.className = 'badge yellow';
+          if (cb) { cb.textContent = 'ESP32-CAM (Connecting)'; cb.className = 'badge yellow'; }
+          if (pill) { pill.textContent = 'Connecting to ESP32…'; pill.className = 'badge yellow'; }
+          if (espPill) { espPill.textContent = '🟡 Connecting…'; espPill.className = 'badge yellow'; }
+        }
+      } else {
+        if (isConnected) {
+          if (cb) { cb.textContent = `Webcam (Idx ${d.active_camera_index ?? 0})`; cb.className = 'badge green'; }
+          if (pill) { pill.textContent = 'Active (Webcam)'; pill.className = 'badge green'; }
+        } else {
+          if (cb) { cb.textContent = 'Waiting for activation'; cb.className = 'badge yellow'; }
+          if (pill) { pill.textContent = 'Click "Turn ON" Below'; pill.className = 'badge yellow'; }
         }
       }
     } catch (e) {}
@@ -686,16 +849,18 @@
           : '<span style="color:#8b949e">No face</span>';
 
         const qScore = v.face_quality != null ? Number(v.face_quality).toFixed(2) : '—';
+        const visitorName = v.recognized_person || 'Unknown';
 
         const hasImg = v.image_path && v.image_path.length > 0;
         const viewBtn = hasImg
-          ? `<button class="btn btn-blue" onclick="viewImage(${v.visit_id}, '${v.timestamp}', ${v.human_count}, '${v.capture_status}', ${v.face_quality})">View</button>`
+          ? `<button class="btn btn-blue" onclick="viewImage(${v.visit_id}, '${v.timestamp}', ${v.human_count}, '${v.capture_status}', ${v.face_quality}, '${visitorName}')">View</button>`
           : '<span style="color:#8b949e">—</span>';
 
         return `
           <tr>
             <td class="id-cell">#${v.visit_id}</td>
             <td>${fmtDate(v.timestamp)}</td>
+            <td><strong>${visitorName}</strong></td>
             <td>${v.human_count}</td>
             <td>${faceInfo}</td>
             <td>${capBadge}</td>
@@ -712,7 +877,7 @@
   }
 
   // ── Image Modal ───────────────────────────────────────────────────────────
-  function viewImage(visitId, timestamp, humans, capStatus, faceQuality) {
+  function viewImage(visitId, timestamp, humans, capStatus, faceQuality, visitorName) {
     document.getElementById('modal-title').textContent = `Visit #${visitId} — Captured Frame`;
     const fullImg = document.getElementById('modal-img');
     fullImg.src = `/api/visits/${visitId}/image?t=${Date.now()}`;
@@ -723,6 +888,33 @@
        <span>👤 Humans: ${humans}</span> &nbsp;|&nbsp;
        <span>🎯 Quality Q: ${qStr}</span> &nbsp;|&nbsp;
        <span>📌 Status: ${capStatus}</span>`;
+       
+    const nameInput = document.getElementById('modal-name-input');
+    nameInput.value = visitorName !== 'Unknown' ? visitorName : '';
+    
+    const saveBtn = document.getElementById('btn-save-name');
+    saveBtn.onclick = async () => {
+      const newName = nameInput.value.trim();
+      if (!newName) {
+        alert("Please enter a name.");
+        return;
+      }
+      try {
+        const res = await fetch(`/api/visits/${visitId}/name`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: newName })
+        });
+        if (res.ok) {
+          alert("Name saved successfully!");
+          loadVisits();
+        } else {
+          alert("Failed to save name.");
+        }
+      } catch(e) {
+        alert("Error saving name.");
+      }
+    };
 
     const faceThumb = document.getElementById('modal-face-thumb');
     faceThumb.style.display = 'none';

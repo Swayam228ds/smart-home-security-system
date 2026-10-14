@@ -286,6 +286,14 @@ class VisitorStateMachine:
                 crop = target_frame[crop_y1:crop_y2, crop_x1:crop_x2]
                 crop_path = config.IMAGE_SAVE_DIR / f"visit_{visit_id:04d}_face.jpg"
                 cv2.imwrite(str(crop_path), crop)
+                
+                # Recognize Face
+                from recognizer import face_recognizer
+                match = face_recognizer.recognize(crop)
+                if match:
+                    person_id, person_name, conf_dist = match
+                    database.assign_person_to_visit(visit_id, person_id, person_name)
+                    log.info(f"Recognized {person_name} (dist: {conf_dist:.1f})")
 
         conf = float(face_meta.get("confidence", 0.0))
         q_score = float(q_meta.get("quality_score", 0.0))

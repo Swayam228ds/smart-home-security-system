@@ -34,6 +34,7 @@ from state_machine import VisitorStateMachine
 from camera import CameraPipeline
 from quality import evaluate_face_quality
 from rendering import draw_hud
+from recognizer import FaceRecognizerManager
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 logging.basicConfig(
@@ -55,8 +56,12 @@ camera_pipeline: CameraPipeline = None  # type: ignore
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global human_detector, face_detector, state_machine, camera_pipeline
+    from recognizer import face_recognizer
+    
     config.IMAGE_SAVE_DIR.mkdir(parents=True, exist_ok=True)
     database.init_db()
+
+    face_recognizer.load_and_train()
 
     log.info("Initializing Computer Vision detectors...")
     human_detector = YoloHumanDetector(
@@ -146,10 +151,58 @@ def api_status():
     snapshot = state_machine.get_status_snapshot()
     snapshot["camera"] = "running" if camera_pipeline.is_running() else "stopped"
     snapshot["webcam_connected"] = camera_pipeline.is_camera_connected()
+    snapshot["camera_connected"] = camera_pipeline.is_camera_connected()
+    snapshot["camera_source"] = camera_pipeline.camera_source
+    snapshot["esp32_url"] = camera_pipeline.esp32_url
     snapshot["active_camera_index"] = camera_pipeline.active_camera_index
     # Backward compatibility alias
     snapshot["humans_detected"] = snapshot["human_count"]
     return snapshot
+
+
+# ─── Camera Configuration API ─────────────────────────────────────────────────
+
+@app.get("/api/camera/config")
+def api_get_camera_config():
+    """Return current camera source and ESP32 stream settings."""
+    if not camera_pipeline:
+        return {"source": config.CAMERA_SOURCE, "esp32_url": config.ESP32_CAM_URL, "connected": False}
+    return {
+        "source": camera_pipeline.camera_source,
+        "esp32_url": camera_pipeline.esp32_url,
+        "connected": camera_pipeline.is_camera_connected(),
+        "active_target": str(camera_pipeline.active_camera_index),
+    }
+
+
+@app.post("/api/camera/configure")
+async def api_configure_camera(request: Request):
+    """
+    Dynamically switch camera source between 'esp32' and 'webcam',
+    or update the ESP32-CAM stream URL.
+    Payload: {"source": "esp32" | "webcam", "esp32_url": "http://192.168.1.50/stream"}
+    """
+    if not camera_pipeline:
+        return Response(status_code=503, content="Camera pipeline not initialized")
+
+    try:
+        data = await request.json()
+    except Exception:
+        return Response(status_code=400, content="Invalid JSON payload")
+
+    source = data.get("source", camera_pipeline.camera_source).lower()
+    if source not in ("esp32", "webcam"):
+        return Response(status_code=400, content="Invalid source. Must be 'esp32' or 'webcam'")
+
+    esp32_url = data.get("esp32_url", camera_pipeline.esp32_url)
+    camera_pipeline.configure(source=source, esp32_url=esp32_url)
+
+    return {
+        "status": "ok",
+        "source": camera_pipeline.camera_source,
+        "esp32_url": camera_pipeline.esp32_url,
+        "active_target": str(camera_pipeline.active_camera_index),
+    }
 
 
 # ─── Visits API ───────────────────────────────────────────────────────────────
@@ -380,3 +433,29 @@ if __name__ == "__main__":
     print(f"  Cooldown        → {config.EVENT_COOLDOWN_SECS}s")
     print("=" * 60 + "\n")
     uvicorn.run("app:app", host=config.HOST, port=config.PORT, reload=False)
+
+from pydantic import BaseModel
+class NameUpdateRequest(BaseModel):
+    name: str
+
+@app.post("/api/visits/{visit_id}/name")
+async def api_name_visit(visit_id: int, payload: NameUpdateRequest):
+    visit = database.get_visit(visit_id)
+    if not visit:
+        return Response(status_code=404, content="Visit not found")
+    
+    name = payload.name.strip()
+    if not name:
+        return Response(status_code=400, content="Name cannot be empty")
+        
+    person_id = database.get_or_create_person(name)
+    database.assign_person_to_visit(visit_id, person_id, name)
+    
+    # Train the recognizer with this new face
+    img_path = Path(visit["image_path"])
+    face_path = img_path.with_name(f"{img_path.stem}_face{img_path.suffix}")
+    if face_path.exists():
+        from recognizer import face_recognizer
+        face_recognizer.add_new_face(str(face_path), person_id, name)
+        
+    return {"status": "success", "person_id": person_id, "name": name}

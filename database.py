@@ -68,6 +68,18 @@ def init_db():
             log.info("Migrating database: adding 'capture_status' column to visits table.")
             conn.execute("ALTER TABLE visits ADD COLUMN capture_status TEXT NOT NULL DEFAULT 'captured'")
 
+        if "person_id" not in existing_cols:
+            log.info("Migrating database: adding 'person_id' column to visits table.")
+            conn.execute("ALTER TABLE visits ADD COLUMN person_id INTEGER")
+
+        # ── Create people table ───────────────────────────────────────────────
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS people (
+                person_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT UNIQUE NOT NULL
+            )
+        """)
+
         # Useful indexes for dashboard queries
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_visits_timestamp "
@@ -219,3 +231,34 @@ def delete_all_visits() -> int:
 
     log.info(f"Cleared {count} visit record(s) from {DB_PATH}.")
     return count
+
+# -- Face Recognition Queries ------------------------------------------------
+
+def get_or_create_person(name: str) -> int:
+    with _conn() as conn:
+        row = conn.execute("SELECT person_id FROM people WHERE name = ?", (name,)).fetchone()
+        if row:
+            return row['person_id']
+        cur = conn.execute("INSERT INTO people (name) VALUES (?)", (name,))
+        conn.commit()
+        return cur.lastrowid
+
+def assign_person_to_visit(visit_id: int, person_id: int, name: str):
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE visits SET person_id = ?, recognized_person = ? WHERE visit_id = ?",
+            (person_id, name, visit_id)
+        )
+        conn.commit()
+
+def get_all_labeled_faces() -> List[Dict[str, Any]]:
+    with _conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT v.visit_id, v.image_path, v.person_id, p.name 
+            FROM visits v
+            JOIN people p ON v.person_id = p.person_id
+            WHERE v.image_path != '' AND v.person_id IS NOT NULL
+            """
+        ).fetchall()
+    return [dict(r) for r in rows]

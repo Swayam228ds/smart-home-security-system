@@ -7,14 +7,16 @@ and MediaPipe Face Detection quality gating.
 
 from pathlib import Path
 
-# ─── Server & Laptop Webcam Settings ─────────────────────────────────────────
+# ─── Camera & Video Ingestion Settings ────────────────────────────────────────
 HOST                 = "127.0.0.1"
-PORT                 = 8000
-CAMERA_INDEX         = 0        # 0 = primary laptop webcam; tries 1 automatically if needed
+PORT                 = 8080
+CAMERA_SOURCE        = "esp32"  # "esp32" (ESP32-CAM stream) or "webcam" (Laptop Webcam)
+ESP32_CAM_URL        = "http://192.168.1.50:81/stream"  # Default ESP32-CAM stream URL (official Espressif CameraWebServer runs on :81/stream)
+CAMERA_INDEX         = 0        # Fallback index for laptop webcam (0 = primary, 1 = external)
 FRAME_WIDTH          = 640
 FRAME_HEIGHT         = 480
 TARGET_FPS           = 30
-CAMERA_RETRY_SECS    = 2.0      # Retry interval if laptop camera shutter is closed
+CAMERA_RETRY_SECS    = 2.0      # Retry interval if stream or webcam is reconnecting
 
 # ─── Storage Settings ────────────────────────────────────────────────────────
 DB_PATH              = "security.db"
