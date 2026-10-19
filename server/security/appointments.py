@@ -101,7 +101,7 @@ class AppointmentManager:
             
             for appt in self.config.appointments:
                 # Check date validity
-                if appt.date != current_date_str and appt.date.lower() != "all_day":
+                if appt.date != current_date_str and appt.date.lower() not in ("all_day", "today", "any"):
                     continue
                 
                 # Check time range validity

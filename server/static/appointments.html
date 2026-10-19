@@ -1,0 +1,824 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Homeowner Appointments & Access Dashboard</title>
+<style>
+  :root {
+    --bg: #0b0f15;
+    --panel: #121822;
+    --panel-2: #18202c;
+    --panel-3: #1f2a3a;
+    --line: #243042;
+    --text: #e6edf3;
+    --muted: #8b98a9;
+    --accent: #4c9aff;
+    --accent-hover: #3b82f6;
+    --ok: #3fb950;
+    --ok-bg: rgba(63, 185, 80, 0.15);
+    --warn: #d29922;
+    --warn-bg: rgba(210, 153, 34, 0.15);
+    --bad: #f85149;
+    --bad-bg: rgba(248, 81, 73, 0.15);
+    --purple: #a371f7;
+    --purple-bg: rgba(163, 113, 247, 0.15);
+    --radius: 12px;
+    --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+
+  /* Header */
+  header {
+    display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;
+    padding: 14px 24px; border-bottom: 1px solid var(--line); background: var(--panel);
+    position: sticky; top: 0; z-index: 50;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand h1 { font-size: 17px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  .nav-links { display: flex; gap: 10px; align-items: center; }
+  .nav-btn {
+    display: inline-flex; align-items: center; gap: 6px; padding: 6px 12px;
+    border: 1px solid var(--line); border-radius: 8px; font-size: 12px; color: var(--text);
+    background: var(--panel-2); text-decoration: none; transition: all .15s;
+  }
+  .nav-btn:hover { background: var(--panel-3); border-color: var(--accent); color: #fff; }
+  .pills { display: flex; gap: 8px; align-items: center; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px;
+    border: 1px solid var(--line); border-radius: 999px; font-size: 12px; color: var(--muted);
+    background: var(--panel-2);
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #4a5566; flex: none; }
+  .dot.ok { background: var(--ok); box-shadow: 0 0 8px var(--ok); }
+  .dot.warn { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
+  .dot.bad { background: var(--bad); box-shadow: 0 0 8px var(--bad); }
+
+  /* Main Container */
+  main {
+    max-width: 1400px; margin: 0 auto; padding: 20px 24px 48px;
+    display: flex; flex-direction: column; gap: 20px;
+  }
+
+  /* Cards */
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius);
+    overflow: hidden;
+  }
+  .card-header {
+    padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex;
+    align-items: center; justify-content: space-between; gap: 12px; background: rgba(255,255,255,0.02);
+  }
+  .card-title {
+    font-size: 14px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px;
+    color: var(--muted); display: flex; align-items: center; gap: 8px; margin: 0;
+  }
+  .card-body { padding: 18px; }
+
+  /* Hero Presence Switcher */
+  .presence-card {
+    border: 1px solid var(--line);
+    background: linear-gradient(135deg, rgba(18,24,34,0.95), rgba(24,32,44,0.95));
+    box-shadow: 0 4px 20px rgba(0,0,0,0.25);
+  }
+  .presence-row {
+    display: flex; align-items: center; justify-content: space-between; gap: 24px; flex-wrap: wrap;
+  }
+  .presence-info h2 { margin: 0 0 4px; font-size: 20px; font-weight: 600; }
+  .presence-info p { margin: 0; color: var(--muted); font-size: 13px; max-width: 600px; }
+  .presence-controls { display: flex; align-items: center; gap: 16px; }
+
+  /* Custom Toggle Switch */
+  .toggle-wrap { display: flex; align-items: center; gap: 12px; }
+  .switch {
+    position: relative; display: inline-block; width: 68px; height: 34px; flex-shrink: 0;
+  }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .slider {
+    position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+    background-color: var(--bad); transition: .3s cubic-bezier(0.4, 0, 0.2, 1);
+    border-radius: 34px; border: 2px solid var(--line);
+  }
+  .slider:before {
+    position: absolute; content: ""; height: 24px; width: 24px; left: 3px; bottom: 3px;
+    background-color: white; transition: .3s cubic-bezier(0.4, 0, 0.2, 1); border-radius: 50%;
+  }
+  input:checked + .slider { background-color: var(--ok); }
+  input:checked + .slider:before { transform: translateX(34px); }
+
+  .status-badge {
+    padding: 6px 14px; border-radius: 999px; font-weight: 600; font-size: 13px;
+    display: inline-flex; align-items: center; gap: 8px; text-transform: uppercase; letter-spacing: .5px;
+  }
+  .status-badge.home { background: var(--ok-bg); color: var(--ok); border: 1px solid var(--ok); }
+  .status-badge.away { background: var(--bad-bg); color: var(--bad); border: 1px solid var(--bad); }
+
+  /* Real-time Visitor Alert Banner */
+  .visitor-banner {
+    border-radius: var(--radius); padding: 18px 20px; transition: all .3s;
+    border: 1px solid var(--line); background: var(--panel);
+  }
+  .visitor-banner.idle {
+    background: var(--panel-2); border-color: var(--line);
+  }
+  .visitor-banner.need-approval {
+    background: linear-gradient(135deg, rgba(63,185,80,0.1), rgba(18,24,34,0.9));
+    border-color: var(--ok); box-shadow: 0 0 20px rgba(63,185,80,0.2);
+  }
+  .visitor-banner.need-message {
+    background: linear-gradient(135deg, rgba(210,153,34,0.1), rgba(18,24,34,0.9));
+    border-color: var(--warn); box-shadow: 0 0 20px rgba(210,153,34,0.2);
+  }
+
+  .banner-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+  .banner-title { font-size: 16px; font-weight: 600; display: flex; align-items: center; gap: 8px; margin: 0; }
+  .visitor-grid {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin: 12px 0;
+  }
+  .data-box {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px;
+  }
+  .data-label { font-size: 11px; text-transform: uppercase; color: var(--muted); margin-bottom: 2px; }
+  .data-value { font-size: 14px; font-weight: 500; }
+
+  /* Action Buttons */
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    padding: 8px 16px; border-radius: 8px; border: 1px solid transparent;
+    font-size: 13px; font-weight: 500; cursor: pointer; transition: all .15s;
+  }
+  .btn-primary { background: var(--accent); color: white; }
+  .btn-primary:hover { background: var(--accent-hover); }
+  .btn-ok { background: var(--ok); color: white; font-weight: 600; }
+  .btn-ok:hover { background: #2ea043; }
+  .btn-bad { background: var(--bad); color: white; font-weight: 600; }
+  .btn-bad:hover { background: #da3633; }
+  .btn-outline { background: transparent; border-color: var(--line); color: var(--text); }
+  .btn-outline:hover { background: var(--panel-2); border-color: var(--muted); }
+  .btn-sm { padding: 4px 10px; font-size: 12px; }
+
+  /* Message Compose Panel (Away mode) */
+  .message-compose { margin-top: 14px; display: flex; flex-direction: column; gap: 10px; }
+  .message-input {
+    width: 100%; padding: 10px 14px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--panel-2); color: var(--text); font-size: 14px; resize: vertical; min-height: 60px;
+  }
+  .message-input:focus { outline: none; border-color: var(--accent); }
+  .quick-chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 4px; }
+  .chip {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 999px;
+    padding: 4px 12px; font-size: 12px; color: var(--muted); cursor: pointer; transition: all .15s;
+  }
+  .chip:hover { border-color: var(--accent); color: var(--text); background: var(--panel-3); }
+
+  /* Split Layout for Appointments */
+  .grid-2 {
+    display: grid; grid-template-columns: minmax(320px, 1fr) minmax(450px, 1.8fr); gap: 20px;
+  }
+  @media (max-width: 900px) { .grid-2 { grid-template-columns: 1fr; } }
+
+  /* Form Elements */
+  .form-group { margin-bottom: 14px; }
+  .form-group label { display: block; font-size: 12px; font-weight: 500; color: var(--muted); margin-bottom: 6px; }
+  .form-control {
+    width: 100%; padding: 9px 12px; border-radius: 8px; border: 1px solid var(--line);
+    background: var(--panel-2); color: var(--text); font-size: 13px;
+  }
+  .form-control:focus { outline: none; border-color: var(--accent); }
+  .form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+
+  /* Table / List */
+  .appt-list { display: flex; flex-direction: column; gap: 10px; }
+  .appt-card {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px;
+    padding: 12px 16px; display: flex; align-items: center; justify-content: space-between;
+    gap: 14px; transition: border-color .15s; flex-wrap: wrap;
+  }
+  .appt-card:hover { border-color: #3b4c65; }
+  .appt-left { display: flex; align-items: center; gap: 14px; min-width: 0; }
+  .appt-avatar {
+    width: 38px; height: 38px; border-radius: 50%; background: var(--panel-3);
+    display: flex; align-items: center; justify-content: center; font-size: 16px; flex-shrink: 0;
+  }
+  .appt-meta h4 { margin: 0 0 2px; font-size: 14px; font-weight: 600; }
+  .appt-meta p { margin: 0; color: var(--muted); font-size: 12px; }
+  .appt-tags { display: flex; align-items: center; gap: 6px; margin-top: 4px; flex-wrap: wrap; }
+  .tag {
+    padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 500;
+    background: var(--panel-3); border: 1px solid var(--line); color: var(--muted);
+  }
+  .tag.approved { background: var(--ok-bg); color: var(--ok); border-color: var(--ok); }
+  .tag.pending { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+  .appt-actions { display: flex; gap: 8px; align-items: center; }
+
+  /* Toast Notification */
+  .toast {
+    position: fixed; bottom: 24px; right: 24px; background: var(--panel-2);
+    border: 1px solid var(--ok); color: var(--ok); padding: 12px 20px;
+    border-radius: 10px; font-size: 13px; font-weight: 500; box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+    display: none; align-items: center; gap: 10px; z-index: 1000;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span style="font-size:22px;">🏠</span>
+    <div>
+      <h1>Homeowner Control Center</h1>
+      <div style="font-size:11px; color:var(--muted);">Appointments & Visitor Access Management</div>
+    </div>
+  </div>
+
+  <div class="nav-links">
+    <a href="/" class="nav-btn">📹 Vision Dashboard</a>
+    <a href="/console" class="nav-btn">🎙 Audio Console</a>
+  </div>
+
+  <div class="pills">
+    <div class="pill"><span class="dot" id="dot-server"></span><span id="txt-server">Server</span></div>
+    <div class="pill"><span class="dot" id="dot-esp32"></span><span id="txt-esp32">ESP32 Speaker</span></div>
+  </div>
+</header>
+
+<main>
+
+  <!-- 1. HERO: HOMEOWNER PRESENCE TOGGLE -->
+  <div class="card presence-card">
+    <div class="card-body">
+      <div class="presence-row">
+        <div class="presence-info">
+          <h2>Homeowner Presence</h2>
+          <p id="presence-desc">
+            Toggle your availability. When you are <strong>AT HOME</strong>, arriving visitors with appointments will prompt you for approval.
+            When you are <strong>AWAY</strong>, you can type a message that plays out loud through the door speaker.
+          </p>
+        </div>
+        <div class="presence-controls">
+          <div class="toggle-wrap">
+            <span style="font-size: 13px; color: var(--muted);" id="presence-mode-label">Away</span>
+            <label class="switch">
+              <input type="checkbox" id="presence-toggle" onchange="togglePresence(this.checked)">
+              <span class="slider"></span>
+            </label>
+            <span class="status-badge" id="presence-badge">Loading...</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 2. REAL-TIME DOORBELL & DECISION CARD -->
+  <div class="card" id="doorbell-card">
+    <div class="card-header">
+      <h3 class="card-title">
+        <span>🚪</span> Real-Time Front Door Visitor Status
+      </h3>
+      <div style="display:flex; gap:8px;">
+        <button class="btn btn-outline btn-sm" onclick="clearVisitor()">Reset Door</button>
+      </div>
+    </div>
+    <div class="card-body">
+      
+      <!-- Visitor Status Container -->
+      <div class="visitor-banner idle" id="visitor-banner">
+        <div class="banner-header">
+          <h4 class="banner-title" id="visitor-banner-title">
+            <span>🟢</span> Front Door Clear — Monitoring...
+          </h4>
+          <span class="tag" id="visitor-session-tag">No active visitor</span>
+        </div>
+        
+        <p style="margin:0 0 10px; color:var(--muted); font-size:13px;" id="visitor-banner-desc">
+          When someone approaches the door, their appointment details and arrival notice will appear right here.
+        </p>
+
+        <!-- Dynamic Data Grid (populated when visitor arrives) -->
+        <div class="visitor-grid" id="visitor-grid" style="display:none;">
+          <div class="data-box">
+            <div class="data-label">Visitor Name</div>
+            <div class="data-value" id="val-vname">—</div>
+          </div>
+          <div class="data-box">
+            <div class="data-label">Stated Purpose</div>
+            <div class="data-value" id="val-vpurpose">—</div>
+          </div>
+          <div class="data-box">
+            <div class="data-label">Appointment Match</div>
+            <div class="data-value" id="val-vappt">—</div>
+          </div>
+          <div class="data-box">
+            <div class="data-label">Homeowner Verdict</div>
+            <div class="data-value" id="val-verdict">Pending</div>
+          </div>
+        </div>
+
+        <!-- SCENARIO A: HOMEOWNER AT HOME -> APPROVAL PROMPT -->
+        <div id="panel-approval" style="display:none; margin-top:14px; padding-top:14px; border-top:1px solid rgba(255,255,255,0.08);">
+          <div style="font-weight:600; font-size:14px; margin-bottom:8px; color:var(--ok);">
+            🔔 Visitor Approval Required: Would you like to grant entry?
+          </div>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; align-items:center;">
+            <button class="btn btn-ok" onclick="submitApproval(true)">
+              <span>✅</span> Approve Entry (Speaks on ESP32 Speaker)
+            </button>
+            <button class="btn btn-bad" onclick="submitApproval(false)">
+              <span>❌</span> Deny Entry
+            </button>
+          </div>
+        </div>
+
+        <!-- SCENARIO B: HOMEOWNER AWAY -> CUSTOM MESSAGE PROMPT -->
+        <div id="panel-message" style="display:none; margin-top:14px; padding-top:14px; border-top:1px solid rgba(255,255,255,0.08);">
+          <div style="font-weight:600; font-size:14px; margin-bottom:6px; color:var(--warn);">
+            📢 You are AWAY: Send a Spoken Voice Message to the Visitor:
+          </div>
+          <div class="quick-chips">
+            <span class="chip" onclick="setQuickMessage('Please leave the delivery at the front door. Thank you!')">📦 Leave at front door</span>
+            <span class="chip" onclick="setQuickMessage('I am currently away. Please come back after 6 PM.')">⏰ Return after 6 PM</span>
+            <span class="chip" onclick="setQuickMessage('I am just around the corner, please wait 5 minutes!')">🏃 Back in 5 mins</span>
+            <span class="chip" onclick="setQuickMessage('Please leave the package with the neighbor at Apt 4B.')">🏢 Leave with neighbor</span>
+          </div>
+          <div class="message-compose">
+            <textarea class="message-input" id="away-message-text" placeholder="Type a message to be spoken out loud through the door speaker to the visitor..."></textarea>
+            <div>
+              <button class="btn btn-primary" onclick="sendAwayMessage()">
+                <span>🔊</span> Speak Message Over Door Speaker (ESP32 MAX98357A)
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Broadcast Status Banner -->
+        <div id="panel-broadcast-status" style="display:none; margin-top:12px; padding:10px 14px; background:var(--panel-2); border-radius:8px; border:1px solid var(--line); font-size:13px;">
+          <span style="color:var(--ok); font-weight:600;">🔊 Last broadcast on door speaker:</span> <span id="txt-last-broadcast">None</span>
+        </div>
+
+      </div>
+
+    </div>
+  </div>
+
+  <!-- 3. SPLIT APPOINTMENTS VIEW: ADD FORM + LIST -->
+  <div class="grid-2">
+
+    <!-- Left: Add New Appointment -->
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title"><span>➕</span> Schedule Appointment</h3>
+      </div>
+      <div class="card-body">
+        <form id="add-appt-form" onsubmit="addAppointment(event)">
+          <div class="form-group">
+            <label>Visitor Name</label>
+            <input type="text" id="form-vname" class="form-control" placeholder="e.g. Rahul Verma or Amazon Courier" required>
+          </div>
+          <div class="form-group">
+            <label>Purpose of Visit</label>
+            <input type="text" id="form-purpose" class="form-control" placeholder="e.g. Package delivery, plumbing repair, guest" required>
+          </div>
+          <div class="form-row">
+            <div class="form-group">
+              <label>Date</label>
+              <input type="text" id="form-date" class="form-control" value="today" placeholder="today or YYYY-MM-DD" required>
+            </div>
+            <div class="form-group">
+              <label>Time Range</label>
+              <input type="text" id="form-time" class="form-control" value="all_day" placeholder="e.g. 10:00-12:00 or all_day" required>
+            </div>
+          </div>
+          <div class="form-group" style="display:flex; align-items:center; gap:8px;">
+            <input type="checkbox" id="form-approved" checked style="width:16px; height:16px; cursor:pointer;">
+            <label for="form-approved" style="margin:0; cursor:pointer; color:var(--text);">Pre-approve appointment automatically</label>
+          </div>
+          <button type="submit" class="btn btn-primary" style="width:100%; margin-top:6px;">
+            <span>📅</span> Add to Scheduled Appointments
+          </button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Right: Appointments List -->
+    <div class="card">
+      <div class="card-header">
+        <h3 class="card-title">
+          <span>📋</span> Scheduled Appointments (<span id="appt-count">0</span>)
+        </h3>
+        <div>
+          <button class="btn btn-outline btn-sm" onclick="loadAppointments()">🔄 Refresh</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div id="appt-container" class="appt-list">
+          <div style="color:var(--muted); text-align:center; padding:20px;">Loading appointments...</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+</main>
+
+<!-- Toast Notification -->
+<div class="toast" id="toast">
+  <span>✓</span> <span id="toast-text">Notification</span>
+</div>
+
+<script>
+  const API = window.location.origin;
+  let isHome = true;
+  let currentVisitorState = {};
+
+  // ─── INITIALIZATION ──────────────────────────────────────────
+  window.addEventListener('DOMContentLoaded', () => {
+    checkHealth();
+    loadOwnerStatus();
+    loadAppointments();
+    pollVisitorStatus();
+    setInterval(pollVisitorStatus, 1500);
+    setInterval(checkHealth, 5000);
+  });
+
+  function showToast(text, duration = 3500) {
+    const t = document.getElementById('toast');
+    document.getElementById('toast-text').textContent = text;
+    t.style.display = 'flex';
+    setTimeout(() => { t.style.display = 'none'; }, duration);
+  }
+
+  // ─── HEALTH CHECK ────────────────────────────────────────────
+  async function checkHealth() {
+    try {
+      const res = await fetch(`${API}/api/health`);
+      if (res.ok) {
+        document.getElementById('dot-server').className = 'dot ok';
+        document.getElementById('txt-server').textContent = 'Server Online';
+      } else {
+        document.getElementById('dot-server').className = 'dot bad';
+        document.getElementById('txt-server').textContent = 'Server Degraded';
+      }
+    } catch {
+      document.getElementById('dot-server').className = 'dot bad';
+      document.getElementById('txt-server').textContent = 'Server Offline';
+    }
+
+    try {
+      const ares = await fetch(`${API}/api/auto-conversation/status`);
+      const adata = await ares.json();
+      if (adata.esp32_connected) {
+        document.getElementById('dot-esp32').className = 'dot ok';
+        document.getElementById('txt-esp32').textContent = 'ESP32 Speaker Ready';
+      } else {
+        document.getElementById('dot-esp32').className = 'dot warn';
+        document.getElementById('txt-esp32').textContent = 'ESP32 Standby';
+      }
+    } catch {
+      document.getElementById('dot-esp32').className = 'dot';
+    }
+  }
+
+  // ─── HOMEOWNER PRESENCE TOGGLE ───────────────────────────────
+  async function loadOwnerStatus() {
+    try {
+      const res = await fetch(`${API}/api/owners/status`);
+      const data = await res.json();
+      isHome = !!data.anyone_home;
+      updatePresenceUI(isHome);
+    } catch (e) {
+      console.error("Failed to load owner status", e);
+    }
+  }
+
+  async function togglePresence(checked) {
+    try {
+      const res = await fetch(`${API}/api/owners/toggle-presence`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_home: checked })
+      });
+      const data = await res.json();
+      isHome = data.is_home;
+      updatePresenceUI(isHome);
+      showToast(isHome ? "🟢 Homeowner status: AT HOME" : "🔴 Homeowner status: AWAY");
+      pollVisitorStatus(); // Refresh alert banner immediately
+    } catch (e) {
+      alert("Failed to toggle presence: " + e.message);
+    }
+  }
+
+  function updatePresenceUI(home) {
+    const toggle = document.getElementById('presence-toggle');
+    const badge = document.getElementById('presence-badge');
+    const label = document.getElementById('presence-mode-label');
+    const desc = document.getElementById('presence-desc');
+
+    toggle.checked = home;
+    if (home) {
+      label.textContent = "Home";
+      badge.textContent = "🟢 AT HOME";
+      badge.className = "status-badge home";
+      desc.innerHTML = "Status: <strong>AT HOME</strong>. When visitors with appointments arrive, you will be prompted right here to approve their entry.";
+    } else {
+      label.textContent = "Away";
+      badge.textContent = "🔴 AWAY";
+      badge.className = "status-badge away";
+      desc.innerHTML = "Status: <strong>AWAY</strong>. When visitors arrive with appointments, you will be prompted to type a voice message that is spoken directly over the door speaker.";
+    }
+  }
+
+  // ─── REAL-TIME VISITOR DECISION SYSTEM ─────────────────────────
+  async function pollVisitorStatus() {
+    try {
+      const res = await fetch(`${API}/api/visitor/live-status`);
+      const data = await res.json();
+      currentVisitorState = data;
+      renderVisitorBanner(data);
+    } catch (e) {
+      console.error("Error polling visitor status:", e);
+    }
+  }
+
+  function renderVisitorBanner(data) {
+    const banner = document.getElementById('visitor-banner');
+    const title = document.getElementById('visitor-banner-title');
+    const desc = document.getElementById('visitor-banner-desc');
+    const grid = document.getElementById('visitor-grid');
+    const sessionTag = document.getElementById('visitor-session-tag');
+
+    const panelApproval = document.getElementById('panel-approval');
+    const panelMessage = document.getElementById('panel-message');
+    const panelBroadcast = document.getElementById('panel-broadcast-status');
+
+    if (!data.has_visitor) {
+      banner.className = 'visitor-banner idle';
+      title.innerHTML = '<span>🟢</span> Front Door Clear — Monitoring...';
+      sessionTag.textContent = 'No active visitor';
+      sessionTag.className = 'tag';
+      desc.textContent = 'When someone approaches the door, their appointment details and arrival notice will appear right here.';
+      grid.style.display = 'none';
+      panelApproval.style.display = 'none';
+      panelMessage.style.display = 'none';
+      panelBroadcast.style.display = 'none';
+      return;
+    }
+
+    // Visitor Detected!
+    grid.style.display = 'grid';
+    document.getElementById('val-vname').textContent = data.visitor_name || 'Unknown';
+    document.getElementById('val-vpurpose').textContent = data.visitor_purpose || 'General Visit';
+    
+    if (data.has_appointment && data.matched_appointment) {
+      document.getElementById('val-vappt').innerHTML = `✅ ${data.matched_appointment.date} (${data.matched_appointment.time_range})`;
+    } else {
+      document.getElementById('val-vappt').innerHTML = `⚠️ No confirmed appointment`;
+    }
+
+    document.getElementById('val-verdict').textContent = data.verdict || 'Awaiting Action';
+
+    // Show previous broadcast if any
+    if (data.last_spoken_message) {
+      panelBroadcast.style.display = 'block';
+      document.getElementById('txt-last-broadcast').textContent = `"${data.last_spoken_message.text}" (${data.last_spoken_message.timestamp})`;
+    } else {
+      panelBroadcast.style.display = 'none';
+    }
+
+    // Determine prompt based on prompt_type
+    if (data.prompt_type === 'approval_needed') {
+      banner.className = 'visitor-banner need-approval';
+      title.innerHTML = `<span>🔔</span> Visitor at Door: <strong>${data.visitor_name}</strong>`;
+      sessionTag.textContent = 'Approval Required (At Home)';
+      sessionTag.className = 'tag approved';
+      desc.textContent = 'Visitor is at the door with a scheduled appointment. Please choose whether to approve entry:';
+      panelApproval.style.display = 'block';
+      panelMessage.style.display = 'none';
+    } else if (data.prompt_type === 'message_needed') {
+      banner.className = 'visitor-banner need-message';
+      title.innerHTML = `<span>🚪</span> Visitor Arrived: <strong>${data.visitor_name}</strong> (You are Away)`;
+      sessionTag.textContent = 'Spoken Message Required (Away)';
+      sessionTag.className = 'tag pending';
+      desc.textContent = 'Visitor has arrived for their appointment while you are away. Send a spoken voice message to the door speaker:';
+      panelApproval.style.display = 'none';
+      panelMessage.style.display = 'block';
+    } else {
+      // Already decided or neutral
+      banner.className = 'visitor-banner idle';
+      title.innerHTML = `<span>👤</span> Visitor at Door: <strong>${data.visitor_name}</strong>`;
+      sessionTag.textContent = data.verdict ? `Verdict: ${data.verdict}` : 'In Conversation';
+      sessionTag.className = 'tag';
+      panelApproval.style.display = 'none';
+      panelMessage.style.display = 'none';
+    }
+  }
+
+  // Submit Approval / Denial (Home Mode)
+  async function submitApproval(approved) {
+    try {
+      const res = await fetch(`${API}/api/visitor/approve`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ approved })
+      });
+      const data = await res.json();
+      showToast(approved ? "✅ Entry approved! Spoken on door speaker." : "❌ Entry denied. Message spoken on speaker.");
+      pollVisitorStatus();
+    } catch (e) {
+      alert("Error submitting decision: " + e.message);
+    }
+  }
+
+  // Send Custom Voice Message to Door Speaker (Away Mode)
+  function setQuickMessage(text) {
+    document.getElementById('away-message-text').value = text;
+  }
+
+  async function sendAwayMessage() {
+    const text = document.getElementById('away-message-text').value.trim();
+    if (!text) {
+      alert("Please type a message to broadcast to the visitor.");
+      return;
+    }
+    try {
+      const res = await fetch(`${API}/api/visitor/speak-message`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: text })
+      });
+      const data = await res.json();
+      showToast("🔊 Message successfully spoken over ESP32 door speaker!");
+      document.getElementById('away-message-text').value = '';
+      pollVisitorStatus();
+    } catch (e) {
+      alert("Error broadcasting message: " + e.message);
+    }
+  }
+
+  // Clear or Reset visitor from door
+  async function clearVisitor() {
+    try {
+      await fetch(`${API}/api/visitor/clear-arrival`, { method: 'POST' });
+      pollVisitorStatus();
+      showToast("Front door status reset.");
+    } catch (e) {
+      console.error(e);
+    }
+  }
+
+  // Quick simulate arrival from appointment card
+  async function simulateArrival(name, purpose) {
+    try {
+      const res = await fetch(`${API}/api/visitor/simulate-arrival`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visitor_name: name, purpose })
+      });
+      const data = await res.json();
+      showToast(`🧪 Simulated arrival of ${name} at the door!`);
+      pollVisitorStatus();
+      window.scrollTo({ top: 120, behavior: 'smooth' });
+    } catch (e) {
+      alert("Failed to simulate arrival: " + e.message);
+    }
+  }
+
+  // ─── APPOINTMENTS MANAGEMENT ─────────────────────────────────
+  async function loadAppointments() {
+    const container = document.getElementById('appt-container');
+    try {
+      const res = await fetch(`${API}/api/appointments`);
+      const data = await res.json();
+      const appts = data.appointments || [];
+      document.getElementById('appt-count').textContent = appts.length;
+
+      if (appts.length === 0) {
+        container.innerHTML = '<div style="color:var(--muted); text-align:center; padding:30px;">No scheduled appointments found. Add one on the left!</div>';
+        return;
+      }
+
+      container.innerHTML = appts.map(a => `
+        <div class="appt-card">
+          <div class="appt-left">
+            <div class="appt-avatar">${getAvatarIcon(a.purpose)}</div>
+            <div class="appt-meta">
+              <h4>${escapeHtml(a.visitor_name)}</h4>
+              <p>${escapeHtml(a.purpose)}</p>
+              <div class="appt-tags">
+                <span class="tag">📅 ${escapeHtml(a.date)}</span>
+                <span class="tag">⏰ ${escapeHtml(a.time_range)}</span>
+                <span class="tag ${a.approved ? 'approved' : 'pending'}">${a.approved ? 'Approved' : 'Pending'}</span>
+              </div>
+            </div>
+          </div>
+          <div class="appt-actions">
+            <button class="btn btn-primary btn-sm" onclick="simulateArrival('${escapeAttr(a.visitor_name)}', '${escapeAttr(a.purpose)}')">
+              <span>🧪</span> Test Arrival
+            </button>
+            <button class="btn btn-outline btn-sm" onclick="toggleApproval('${escapeAttr(a.visitor_name)}', '${escapeAttr(a.date)}')">
+              ${a.approved ? 'Revoke' : 'Approve'}
+            </button>
+            <button class="btn btn-bad btn-sm" onclick="deleteAppointment('${escapeAttr(a.visitor_name)}', '${escapeAttr(a.date)}')">
+              🗑️
+            </button>
+          </div>
+        </div>
+      `).join('');
+    } catch (e) {
+      container.innerHTML = `<div style="color:var(--bad); padding:10px;">Failed to load appointments: ${e.message}</div>`;
+    }
+  }
+
+  async function addAppointment(e) {
+    e.preventDefault();
+    const vname = document.getElementById('form-vname').value.trim();
+    const purpose = document.getElementById('form-purpose').value.trim();
+    const date = document.getElementById('form-date').value.trim();
+    const time_range = document.getElementById('form-time').value.trim();
+    const approved = document.getElementById('form-approved').checked;
+
+    try {
+      const res = await fetch(`${API}/api/appointments`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          visitor_name: vname,
+          purpose,
+          date,
+          time_range,
+          approved
+        })
+      });
+      if (res.ok) {
+        showToast(`✅ Added appointment for ${vname}`);
+        document.getElementById('form-vname').value = '';
+        document.getElementById('form-purpose').value = '';
+        loadAppointments();
+      } else {
+        const err = await res.json();
+        alert("Error adding appointment: " + (err.detail || "Unknown error"));
+      }
+    } catch (e) {
+      alert("Error adding appointment: " + e.message);
+    }
+  }
+
+  async function toggleApproval(vname, date) {
+    try {
+      const res = await fetch(`${API}/api/appointments/toggle-approval`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visitor_name: vname, date })
+      });
+      if (res.ok) {
+        showToast(`Approval status updated for ${vname}`);
+        loadAppointments();
+      }
+    } catch (e) {
+      alert("Error toggling approval: " + e.message);
+    }
+  }
+
+  async function deleteAppointment(vname, date) {
+    if (!confirm(`Are you sure you want to remove appointment for ${vname}?`)) return;
+    try {
+      const res = await fetch(`${API}/api/appointments`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ visitor_name: vname, date })
+      });
+      if (res.ok) {
+        showToast(`Appointment removed for ${vname}`);
+        loadAppointments();
+      }
+    } catch (e) {
+      alert("Error deleting appointment: " + e.message);
+    }
+  }
+
+  function getAvatarIcon(purpose = '') {
+    const p = purpose.toLowerCase();
+    if (p.includes('delivery') || p.includes('package') || p.includes('amazon') || p.includes('courier')) return '📦';
+    if (p.includes('plumb') || p.includes('repair') || p.includes('maintenance')) return '🔧';
+    if (p.includes('doctor') || p.includes('medical') || p.includes('health')) return '🩺';
+    if (p.includes('clean') || p.includes('maid')) return '🧹';
+    if (p.includes('friend') || p.includes('family') || p.includes('guest')) return '👋';
+    return '👤';
+  }
+
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str).replace(/[&<>"']/g, s => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[s]));
+  }
+
+  function escapeAttr(str) {
+    if (!str) return '';
+    return String(str).replace(/'/g, "\\'");
+  }
+</script>
+
+</body>
+</html>

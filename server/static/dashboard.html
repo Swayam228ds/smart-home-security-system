@@ -161,7 +161,12 @@
 </head>
 <body>
 <header>
-  <h1>Home Security Console</h1>
+  <div style="display:flex; align-items:center; gap:12px;">
+    <h1>Home Security Console</h1>
+    <a href="/appointments" style="color:var(--accent); text-decoration:none; font-size:12px; padding:4px 10px; background:var(--panel-2); border:1px solid var(--line); border-radius:6px; display:inline-flex; align-items:center; gap:6px;">
+      <span>📅</span> Appointments & Access Dashboard
+    </a>
+  </div>
   <div class="pills">
     <span class="pill" title="Vision server (ESP32-CAM pipeline)"><span class="dot" id="p-vision"></span><span id="t-vision">Vision</span></span>
     <span class="pill" title="Face recognition gallery"><span class="dot" id="p-recog"></span><span id="t-recog">Recognition</span></span>

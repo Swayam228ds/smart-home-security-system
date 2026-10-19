@@ -35,7 +35,7 @@ from collections import deque
 from contextlib import asynccontextmanager
 from datetime import date, datetime
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Dict, Any, List
 
 import numpy as np
 import httpx
@@ -197,6 +197,29 @@ class AppointmentDelete(BaseModel):
 class OwnerStatusUpdate(BaseModel):
     name: str
     status: str  # 'home', 'away', 'busy', 'sleeping'
+
+
+class OwnerPresenceToggle(BaseModel):
+    is_home: bool
+
+
+class AppointmentToggleApproval(BaseModel):
+    visitor_name: str
+    date: str
+
+
+class VisitorApprovalRequest(BaseModel):
+    approved: bool
+    custom_message: Optional[str] = None
+
+
+class SpeakMessageRequest(BaseModel):
+    message: str
+
+
+class SimulateArrivalRequest(BaseModel):
+    visitor_name: str
+    purpose: str = "Visit"
 
 
 # ──────────────────────────────────────────────
@@ -653,6 +676,265 @@ async def update_owner_status(data: OwnerStatusUpdate):
     raise HTTPException(404, f"Owner '{data.name}' not found")
 
 
+@app.put("/api/appointments/toggle-approval", summary="Toggle appointment approval status")
+async def toggle_appointment_approval(data: AppointmentToggleApproval):
+    """Toggles whether an appointment is approved or pending."""
+    appts = appointment_manager.get_all_appointments()
+    for a in appts:
+        if a.visitor_name.lower() == data.visitor_name.lower() and a.date == data.date:
+            a.approved = not a.approved
+            appointment_manager._save()
+            return {"message": "Approval updated", "appointment": a.model_dump()}
+    raise HTTPException(404, "Appointment not found")
+
+
+@app.post("/api/owners/toggle-presence", summary="Toggle homeowner presence (home/away)")
+async def toggle_owner_presence(data: OwnerPresenceToggle):
+    """Toggles whether the homeowner is currently at home or away."""
+    status = "home" if data.is_home else "away"
+    owners = owner_manager.get_all_owners()
+    target_name = owners[0].name if owners else "Owner"
+    owner = owner_manager.update_status(target_name, status)
+    return {
+        "status": status,
+        "is_home": data.is_home,
+        "anyone_home": owner_manager.is_anyone_home(),
+        "owner": owner.model_dump() if owner else None,
+    }
+
+
+# Track live visitor state for dashboard decisions
+active_visitor_state: Dict[str, Any] = {
+    "visitor_name": None,
+    "visitor_purpose": None,
+    "matched_appointment": None,
+    "has_appointment": False,
+    "arrival_time": None,
+    "verdict": None,  # "APPROVED", "DENIED", "MESSAGE_SENT", or None
+    "last_spoken_message": None,
+}
+
+
+@app.get("/api/visitor/live-status", summary="Get live visitor status, appointment match, and pending decision")
+async def get_live_visitor_status():
+    """
+    Returns real-time visitor presence, appointment check, homeowner presence,
+    and whether an approval prompt (if Home) or message prompt (if Away) is needed.
+    """
+    global active_visitor_state
+    anyone_home = owner_manager.is_anyone_home()
+
+    # 1. Active conversation session from doorbell or manual
+    session_active = conversation_manager.is_session_active() if conversation_manager else False
+    v_name = None
+    v_purpose = None
+    matched_appt = None
+    session_state = "IDLE"
+
+    if session_active and conversation_manager.current_session:
+        sess = conversation_manager.current_session
+        v_name = sess.visitor_name
+        v_purpose = sess.visitor_purpose
+        session_state = sess.state.name
+        if sess.matched_appointment:
+            matched_appt = sess.matched_appointment.model_dump()
+
+    # 2. Check if vision / auto-conversation recognized someone
+    if not v_name and auto_conv and auto_conv.running and auto_conv.identity:
+        v_name = auto_conv.identity.get("name")
+        v_purpose = "Visitor at door"
+
+    # 3. Check if simulated or manual visitor arrival exists
+    if not v_name and active_visitor_state["visitor_name"]:
+        v_name = active_visitor_state["visitor_name"]
+        v_purpose = active_visitor_state["visitor_purpose"]
+        matched_appt = active_visitor_state.get("matched_appointment")
+
+    # Match appointment if name is present but appointment wasn't matched yet
+    if v_name and not matched_appt:
+        found = appointment_manager.find_appointment(v_name, v_purpose or "")
+        if found:
+            matched_appt = found.model_dump()
+
+    has_visitor = v_name is not None
+    has_appointment = matched_appt is not None
+
+    # Determine prompt type needed
+    prompt_type = None
+    if has_visitor and has_appointment and not active_visitor_state.get("verdict"):
+        if anyone_home:
+            prompt_type = "approval_needed"
+        else:
+            prompt_type = "message_needed"
+
+    return {
+        "has_visitor": has_visitor,
+        "visitor_name": v_name,
+        "visitor_purpose": v_purpose,
+        "session_active": session_active,
+        "session_state": session_state,
+        "has_appointment": has_appointment,
+        "matched_appointment": matched_appt,
+        "is_anyone_home": anyone_home,
+        "prompt_type": prompt_type,
+        "verdict": active_visitor_state.get("verdict"),
+        "last_spoken_message": active_visitor_state.get("last_spoken_message"),
+    }
+
+
+@app.post("/api/visitor/approve", summary="Homeowner approves or denies visitor entry")
+async def approve_visitor_entry(req: VisitorApprovalRequest):
+    """
+    Homeowner approves or denies visitor entry from the dashboard.
+    Plays confirmation/denial audio directly over the ESP32 MAX98357A door speaker.
+    """
+    global active_visitor_state
+    from server.audio.esp32_receiver import esp32_receiver
+
+    visitor_name = active_visitor_state.get("visitor_name") or "Visitor"
+    if conversation_manager and conversation_manager.current_session and conversation_manager.current_session.visitor_name:
+        visitor_name = conversation_manager.current_session.visitor_name
+
+    if req.approved:
+        active_visitor_state["verdict"] = "APPROVED"
+        speech_text = (
+            req.custom_message.strip()
+            if req.custom_message
+            else f"Welcome {visitor_name}. Entry approved by homeowner, please come in!"
+        )
+        if conversation_manager and conversation_manager.current_session:
+            conversation_manager.current_session.state = ConversationState.APPROVED
+            conversation_manager.current_session.messages.append({
+                "role": "assistant",
+                "content": speech_text
+            })
+    else:
+        active_visitor_state["verdict"] = "DENIED"
+        speech_text = (
+            req.custom_message.strip()
+            if req.custom_message
+            else f"Entry is not approved at this time. Thank you, goodbye."
+        )
+        if conversation_manager and conversation_manager.current_session:
+            conversation_manager.current_session.state = ConversationState.DENIED
+            conversation_manager.current_session.messages.append({
+                "role": "assistant",
+                "content": speech_text
+            })
+
+    # Synthesize and broadcast through ESP32 speaker
+    pcm = pipeline.tts.synthesize(speech_text)
+    played = esp32_receiver.play_audio(pcm)
+    active_visitor_state["last_spoken_message"] = {
+        "text": speech_text,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "played_on_esp32": played,
+    }
+
+    return {
+        "status": "ok",
+        "verdict": active_visitor_state["verdict"],
+        "spoken_message": speech_text,
+        "played_on_esp32": played,
+    }
+
+
+@app.post("/api/visitor/speak-message", summary="Speak a custom message typed by homeowner over ESP32 door speaker")
+async def speak_visitor_message(req: SpeakMessageRequest):
+    """
+    Homeowner types a custom message (e.g. when away) and broadcasts it
+    directly to the visitor waiting at the front door through the ESP32 MAX98357A speaker.
+    """
+    global active_visitor_state
+    from server.audio.esp32_receiver import esp32_receiver
+
+    text = req.message.strip()
+    if not text:
+        raise HTTPException(400, "Message cannot be empty")
+
+    pcm = pipeline.tts.synthesize(text)
+    played = esp32_receiver.play_audio(pcm)
+
+    active_visitor_state["verdict"] = "MESSAGE_SENT"
+    active_visitor_state["last_spoken_message"] = {
+        "text": text,
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "played_on_esp32": played,
+    }
+
+    if conversation_manager and conversation_manager.current_session:
+        conversation_manager.current_session.messages.append({
+            "role": "assistant",
+            "content": f"[Homeowner Broadcast to Visitor]: {text}",
+        })
+
+    return {
+        "status": "ok",
+        "spoken_message": text,
+        "played_on_esp32": played,
+    }
+
+
+@app.post("/api/visitor/simulate-arrival", summary="Simulate visitor arriving at the door for dashboard testing")
+async def simulate_visitor_arrival(req: SimulateArrivalRequest):
+    """
+    Simulates a visitor arriving at the front door with an appointment.
+    Instantly triggers the homeowner prompt (Approval if Home, Message if Away).
+    """
+    global active_visitor_state
+    appt = appointment_manager.find_appointment(req.visitor_name, req.purpose)
+    if not appt:
+        for a in appointment_manager.get_all_appointments():
+            if (req.visitor_name.lower() in a.visitor_name.lower() or
+                a.visitor_name.lower() in req.visitor_name.lower()):
+                appt = a
+                break
+
+    if not conversation_manager.is_session_active():
+        await conversation_manager.start_session()
+        pipeline.reset()
+
+    sess = conversation_manager.current_session
+    if sess:
+        sess.visitor_name = req.visitor_name
+        sess.visitor_purpose = req.purpose
+        if appt:
+            sess.matched_appointment = appt
+
+    active_visitor_state = {
+        "visitor_name": req.visitor_name,
+        "visitor_purpose": req.purpose,
+        "matched_appointment": appt.model_dump() if appt else None,
+        "has_appointment": appt is not None,
+        "arrival_time": datetime.now().isoformat(timespec="seconds"),
+        "verdict": None,
+        "last_spoken_message": None,
+    }
+    return {
+        "status": "simulated",
+        "visitor": active_visitor_state,
+        "is_anyone_home": owner_manager.is_anyone_home(),
+    }
+
+
+@app.post("/api/visitor/clear-arrival", summary="Clear current visitor from door")
+async def clear_visitor_arrival():
+    """Resets the visitor at the door and closes any test session."""
+    global active_visitor_state
+    if conversation_manager and conversation_manager.is_session_active():
+        await conversation_manager.end_session()
+    active_visitor_state = {
+        "visitor_name": None,
+        "visitor_purpose": None,
+        "matched_appointment": None,
+        "has_appointment": False,
+        "arrival_time": None,
+        "verdict": None,
+        "last_spoken_message": None,
+    }
+    return {"status": "cleared"}
+
+
 # ──────────────────────────────────────────────
 # Health Check
 # ──────────────────────────────────────────────
@@ -913,6 +1195,14 @@ async def audio_console():
     """Serve the original audio test console."""
     index_file = STATIC_DIR / "index.html"
     return HTMLResponse(content=index_file.read_text(encoding="utf-8"))
+
+
+@app.get("/appointments", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/owner", response_class=HTMLResponse, include_in_schema=False)
+@app.get("/appointments-dashboard", response_class=HTMLResponse, include_in_schema=False)
+async def appointments_dashboard_page():
+    """Serve the homeowner appointments and visitor access dashboard."""
+    return HTMLResponse(content=(STATIC_DIR / "appointments.html").read_text(encoding="utf-8"))
 
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
