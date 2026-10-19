@@ -13,6 +13,15 @@ Endpoints:
     GET      /api/owners/status      — Owner status
     PUT      /api/owners/status      — Update owner status
     GET      /api/health             — Health check
+
+Combined dashboard (video + audio):
+    GET      /                       — Combined security dashboard (old console at /console)
+    *        /api/vision/{path}      — Proxy to the vision server API (VISION_URL)
+    GET      /api/vision/video_feed  — Proxied annotated ESP32-CAM MJPEG stream
+    POST     /api/events/vision      — Vision server pushes visit / recognition events here
+    GET      /api/events             — Recent vision events
+    GET      /api/sessions/transcript — Live conversation transcript
+    GET      /api/visit_logs         — Past conversation sessions from the database
 """
 
 import io
@@ -22,15 +31,18 @@ import struct
 import asyncio
 import logging
 import time
+from collections import deque
 from contextlib import asynccontextmanager
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from typing import Optional
 
 import numpy as np
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException
+import httpx
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response, JSONResponse, HTMLResponse
+from fastapi.responses import Response, JSONResponse, HTMLResponse, StreamingResponse
+from sqlalchemy import select
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -43,7 +55,9 @@ from server.conversation.manager import ConversationManager
 from server.security.appointments import AppointmentManager, Appointment
 from server.security.owners import OwnerManager
 from server.pipeline.orchestrator import AudioPipeline
-from server.database.session import init_db
+from server.pipeline.auto_conversation import AutoConversation
+from server.database.session import init_db, async_session
+from server.database.models import VisitLog
 
 # ──────────────────────────────────────────────
 # Logging Setup
@@ -63,6 +77,7 @@ owner_manager: Optional[OwnerManager] = None
 llm_client: Optional[OllamaClient] = None
 conversation_manager: Optional[ConversationManager] = None
 pipeline: Optional[AudioPipeline] = None
+auto_conv: Optional[AutoConversation] = None
 periodic_timeout_task = None
 
 async def _periodic_timeout_check():
@@ -82,7 +97,7 @@ async def lifespan(app: FastAPI):
     Loads all ML models and initializes managers at startup.
     """
     global appointment_manager, owner_manager, llm_client
-    global conversation_manager, pipeline
+    global conversation_manager, pipeline, auto_conv
 
     logger.info("=" * 60)
     logger.info("Home Security Audio Pipeline — Starting Up")
@@ -114,6 +129,8 @@ async def lifespan(app: FastAPI):
     # 4. Initialize audio pipeline (loads VAD, STT, TTS models)
     logger.info("Loading ML models (VAD, Whisper, Piper)...")
     pipeline = AudioPipeline(conversation_manager)
+    auto_conv = AutoConversation(conversation_manager, pipeline, esp32_receiver)
+    logger.info(f"Hands-free conversation: {'ON' if auto_conv.enabled else 'OFF'} (starts when the camera captures a visitor)")
 
     # 5. Start ESP32 UDP receiver task
     logger.info("Starting ESP32 UDP Receiver on port 5005...")
@@ -133,8 +150,12 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down...")
     if periodic_timeout_task:
         periodic_timeout_task.cancel()
+    if auto_conv:
+        await auto_conv.stop()
     if conversation_manager and conversation_manager.is_session_active():
         await conversation_manager.end_session()
+    if _vision_client is not None:
+        await _vision_client.aclose()
     logger.info("Shutdown complete.")
 
 
@@ -721,6 +742,161 @@ def _pcm_to_wav(pcm_data: bytes) -> bytes:
 
 
 # ──────────────────────────────────────────────
+# Combined Dashboard: Vision Proxy & Events
+# ──────────────────────────────────────────────
+vision_events: deque = deque(maxlen=100)
+_vision_client: Optional[httpx.AsyncClient] = None
+
+
+def _vision() -> httpx.AsyncClient:
+    global _vision_client
+    if _vision_client is None:
+        _vision_client = httpx.AsyncClient(base_url=settings.vision_url, timeout=httpx.Timeout(20.0, connect=2.0))
+    return _vision_client
+
+
+@app.post("/api/events/vision", summary="Receive an event from the vision server")
+async def receive_vision_event(event: dict):
+    event["received_at"] = datetime.now().isoformat(timespec="seconds")
+    vision_events.appendleft(event)
+    identity = event.get("identity") or {}
+    if identity.get("known"):
+        logger.info(f"Vision: visit #{event.get('visit_id')} recognized as {identity.get('name')} "
+                    f"({identity.get('score'):.2f})")
+    else:
+        logger.info(f"Vision: {event.get('type')} (visit #{event.get('visit_id')})")
+    started = auto_conv.on_vision_event(event) if auto_conv else False
+    return {"ok": True, "conversation_started": started}
+
+
+# ──────────────────────────────────────────────
+# Hands-free conversation control
+# ──────────────────────────────────────────────
+class AutoToggle(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/auto", summary="Hands-free conversation status")
+async def auto_status():
+    return auto_conv.status() if auto_conv else {"enabled": False, "running": False, "state": "unavailable"}
+
+
+@app.post("/api/auto", summary="Enable / disable hands-free conversation")
+async def auto_set(data: AutoToggle):
+    auto_conv.enabled = data.enabled
+    if not data.enabled:
+        await auto_conv.stop()
+    return auto_conv.status()
+
+
+@app.post("/api/auto/start", summary="Start a hands-free conversation now")
+async def auto_start():
+    if auto_conv.running:
+        raise HTTPException(409, "A conversation is already running")
+    last = next((e for e in vision_events if e.get("type") == "visit_captured"), None)
+    auto_conv.start((last or {}).get("identity"), reason="dashboard")
+    return auto_conv.status()
+
+
+@app.post("/api/auto/stop", summary="Stop the hands-free conversation")
+async def auto_stop():
+    await auto_conv.stop()
+    return auto_conv.status()
+
+
+@app.get("/api/events", summary="Recent vision events")
+async def list_events(limit: int = 30):
+    return {"events": list(vision_events)[:limit]}
+
+
+@app.get("/api/vision/video_feed", include_in_schema=False)
+async def vision_video_feed():
+    """Relay the vision server's annotated MJPEG stream so the dashboard needs one origin."""
+    client = _vision()
+    try:
+        req = client.build_request("GET", "/video_feed", timeout=httpx.Timeout(None, connect=2.0))
+        upstream = await client.send(req, stream=True)
+    except httpx.HTTPError as e:
+        raise HTTPException(502, f"Vision server unreachable at {settings.vision_url}: {e}")
+
+    async def relay():
+        try:
+            async for chunk in upstream.aiter_raw():
+                yield chunk
+        finally:
+            await upstream.aclose()
+
+    return StreamingResponse(relay(), media_type=upstream.headers.get(
+        "content-type", "multipart/x-mixed-replace; boundary=frame"))
+
+
+@app.api_route("/api/vision/{path:path}", methods=["GET", "POST", "PATCH", "DELETE"], include_in_schema=False)
+async def vision_proxy(path: str, request: Request):
+    """Forward /api/vision/<path> to <VISION_URL>/api/<path>."""
+    try:
+        upstream = await _vision().request(
+            request.method,
+            f"/api/{path}",
+            params=dict(request.query_params),
+            content=await request.body(),
+            headers={"content-type": request.headers.get("content-type", "application/octet-stream")},
+        )
+    except httpx.HTTPError as e:
+        return JSONResponse({"error": "vision_offline", "detail": str(e), "vision_url": settings.vision_url},
+                            status_code=502)
+    return Response(content=upstream.content, status_code=upstream.status_code,
+                    media_type=upstream.headers.get("content-type"))
+
+
+@app.get("/api/sessions/transcript", summary="Live conversation transcript")
+async def session_transcript():
+    """Visitor/assistant turns of the current session (system prompt and tool plumbing hidden)."""
+    ctx = conversation_manager.current_session if conversation_manager else None
+    if not ctx:
+        return {"active": False, "messages": []}
+    turns = []
+    for m in ctx.messages:
+        role, content = m.get("role"), (m.get("content") or "").strip()
+        if role == "user" and content:
+            turns.append({"role": "visitor", "text": content})
+        elif role == "assistant" and content:
+            turns.append({"role": "assistant", "text": content})
+        elif role == "assistant" and m.get("tool_calls"):
+            names = ", ".join(tc.get("function", {}).get("name", "?") for tc in m["tool_calls"])
+            turns.append({"role": "tool", "text": f"Checking: {names}"})
+    return {
+        "active": conversation_manager.is_session_active(),
+        "session_id": ctx.session_id,
+        "state": ctx.state.name,
+        "visitor_name": ctx.visitor_name,
+        "visitor_purpose": ctx.visitor_purpose,
+        "messages": turns,
+    }
+
+
+@app.get("/api/visit_logs", summary="Past conversation sessions")
+async def visit_logs(limit: int = 20):
+    try:
+        async with async_session() as db:
+            rows = (await db.execute(
+                select(VisitLog).order_by(VisitLog.created_at.desc()).limit(limit)
+            )).scalars().all()
+    except Exception as e:
+        logger.error(f"visit_logs query failed: {e}")
+        return {"logs": [], "error": str(e)}
+    return {"logs": [{
+        "id": r.id,
+        "session_id": r.session_id,
+        "visitor_name": r.visitor_name,
+        "visitor_purpose": r.visitor_purpose,
+        "status": r.status,
+        "created_at": r.created_at.isoformat() if r.created_at else None,
+        "ended_at": r.ended_at.isoformat() if r.ended_at else None,
+        "turns": sum(1 for m in (r.messages or []) if m.get("role") in ("user", "assistant") and m.get("content")),
+    } for r in rows]}
+
+
+# ──────────────────────────────────────────────
 # Static Files & Root Page
 # ──────────────────────────────────────────────
 STATIC_DIR = Path(__file__).resolve().parent / "static"
@@ -728,7 +904,13 @@ STATIC_DIR = Path(__file__).resolve().parent / "static"
 
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def root():
-    """Serve the test console HTML page."""
+    """Serve the combined video + audio security dashboard."""
+    return HTMLResponse(content=(STATIC_DIR / "dashboard.html").read_text(encoding="utf-8"))
+
+
+@app.get("/console", response_class=HTMLResponse, include_in_schema=False)
+async def audio_console():
+    """Serve the original audio test console."""
     index_file = STATIC_DIR / "index.html"
     return HTMLResponse(content=index_file.read_text(encoding="utf-8"))
 

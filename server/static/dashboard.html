@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Home Security Console</title>
+<style>
+  :root {
+    --bg: #0b0f15;
+    --panel: #121822;
+    --panel-2: #18202c;
+    --line: #243042;
+    --text: #e6edf3;
+    --muted: #8b98a9;
+    --accent: #4c9aff;
+    --ok: #3fb950;
+    --warn: #d29922;
+    --bad: #f85149;
+    --radius: 10px;
+    --mono: ui-monospace, SFMono-Regular, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  header {
+    display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+    padding: 12px 20px; border-bottom: 1px solid var(--line); background: var(--panel);
+    position: sticky; top: 0; z-index: 5;
+  }
+  header h1 { font-size: 16px; margin: 0; font-weight: 600; letter-spacing: .2px; }
+  .pills { display: flex; gap: 8px; flex-wrap: wrap; margin-left: auto; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px;
+    border: 1px solid var(--line); border-radius: 999px; font-size: 12px; color: var(--muted);
+    background: var(--panel-2); white-space: nowrap;
+  }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #4a5566; flex: none; }
+  .dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.bad { background: var(--bad); }
+
+  main {
+    display: grid; gap: 16px; padding: 16px 20px 32px;
+    grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+    max-width: 1500px; margin: 0 auto;
+  }
+  @media (max-width: 1000px) { main { grid-template-columns: minmax(0, 1fr); padding: 12px 16px 24px; } }
+  .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  @media (min-width: 1001px) { .col.side { position: sticky; top: 66px; align-self: start; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); }
+  .card > h2 {
+    margin: 0; padding: 10px 14px; font-size: 12px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: .6px; color: var(--muted); border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 8px;
+  }
+  .card > h2 .right { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 400; }
+  .body { padding: 12px 14px; }
+
+  .video-wrap { position: relative; background: #000; aspect-ratio: 4 / 3; border-radius: 0 0 var(--radius) var(--radius); overflow: hidden; }
+  .video-wrap img { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .video-offline {
+    position: absolute; inset: 0; display: none; align-items: center; justify-content: center;
+    flex-direction: column; gap: 6px; color: var(--muted); text-align: center; padding: 20px;
+  }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; }
+  .stat { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 0; }
+  .stat .k { font-size: 11px; color: var(--muted); text-transform: uppercase; letter-spacing: .4px; }
+  .stat .v { font-size: 15px; font-weight: 600; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .status-line { margin-top: 10px; color: var(--muted); font-size: 13px; }
+
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  .row + .row { margin-top: 8px; }
+  label.f { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+  input, select, button { font: inherit; color: var(--text); }
+  input, select {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px; min-width: 0;
+  }
+  input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  button {
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 7px; padding: 7px 12px;
+    cursor: pointer; white-space: nowrap;
+  }
+  button:hover { border-color: #3a4a60; }
+  button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button.danger { color: var(--bad); }
+  button:disabled { opacity: .5; cursor: default; }
+  button.rec { background: var(--bad); border-color: var(--bad); color: #fff; }
+
+  /* At the door */
+  .door { display: grid; grid-template-columns: 112px minmax(0, 1fr); gap: 14px; align-items: start; }
+  .door img, .face-ph {
+    width: 112px; height: 112px; object-fit: cover; border-radius: 8px; border: 1px solid var(--line); background: var(--panel-2);
+  }
+  .face-ph { display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 12px; text-align: center; }
+  .who { font-size: 20px; font-weight: 650; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+  .badge.known { color: var(--ok); border-color: rgba(63,185,80,.5); }
+  .badge.unknown { color: var(--bad); border-color: rgba(248,81,73,.5); }
+  .meta { color: var(--muted); font-size: 13px; margin-top: 4px; }
+  .bar { height: 6px; background: var(--panel-2); border-radius: 3px; overflow: hidden; margin-top: 8px; border: 1px solid var(--line); }
+  .bar > i { display: block; height: 100%; width: 0; background: var(--accent); transition: width .3s; }
+
+  /* Conversation */
+  .chat { height: 360px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; }
+  .msg { max-width: 85%; padding: 8px 11px; border-radius: 10px; white-space: pre-wrap; word-wrap: break-word; }
+  .msg.visitor { align-self: flex-end; background: #1f3a5f; }
+  .msg.assistant { align-self: flex-start; background: var(--panel-2); border: 1px solid var(--line); }
+  .msg.tool { align-self: center; font-size: 12px; color: var(--muted); background: none; padding: 2px; }
+  .msg .who-s { display: block; font-size: 11px; color: var(--muted); margin-bottom: 2px; }
+  .empty { color: var(--muted); text-align: center; margin: auto; font-size: 13px; }
+  .session-info { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+  .composer { display: flex; gap: 8px; padding: 10px 14px; border-top: 1px solid var(--line); }
+  .composer input { flex: 1; }
+  .handsfree { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 12px; margin-top: 10px;
+    background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; }
+  .switch { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; user-select: none; }
+  .switch input { width: 34px; height: 18px; appearance: none; background: #3a4556; border-radius: 9px; position: relative; cursor: pointer; padding: 0; border: none; }
+  .switch input::after { content: ""; position: absolute; top: 2px; left: 2px; width: 14px; height: 14px; border-radius: 50%; background: #fff; transition: left .15s; }
+  .switch input:checked { background: var(--ok); }
+  .switch input:checked::after { left: 18px; }
+  .mic { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; font-size: 12px;
+    border: 1px solid var(--line); color: var(--muted); }
+  .mic .dot { width: 9px; height: 9px; }
+  .mic.on { color: var(--ok); border-color: rgba(63,185,80,.5); }
+  .mic.on .dot { background: var(--ok); animation: pulse 1.2s infinite; }
+  .mic.speaking { color: var(--accent); border-color: rgba(76,154,255,.5); }
+  .mic.speaking .dot { background: var(--accent); }
+  .mic.thinking { color: var(--warn); border-color: rgba(210,153,34,.5); }
+  .mic.thinking .dot { background: var(--warn); }
+  .mic.error { color: var(--bad); border-color: rgba(248,81,73,.5); }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .log { font-family: var(--mono); font-size: 12px; color: var(--muted); max-height: 90px; overflow-y: auto; padding: 8px 14px; border-top: 1px solid var(--line); }
+
+  /* Tabs & tables */
+  .tabs { display: flex; gap: 4px; padding: 8px 10px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  .tab { border: none; background: none; color: var(--muted); padding: 8px 12px; border-bottom: 2px solid transparent; border-radius: 0; }
+  .tab.active { color: var(--text); border-bottom-color: var(--accent); }
+  .pane { display: none; } .pane.active { display: block; }
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  th { color: var(--muted); font-weight: 500; font-size: 12px; }
+  td.num { font-variant-numeric: tabular-nums; }
+  td img.thumb { width: 52px; height: 52px; object-fit: cover; border-radius: 6px; border: 1px solid var(--line); cursor: zoom-in; display: block; }
+  .people { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
+  .person { background: var(--panel-2); border: 1px solid var(--line); border-radius: 8px; padding: 10px; display: flex; flex-direction: column; gap: 6px; }
+  .person img, .person .face-ph { width: 100%; height: 120px; object-fit: cover; border-radius: 6px; }
+  .hint { color: var(--muted); font-size: 12px; }
+  .enroll { display: grid; gap: 10px; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); margin-bottom: 14px; }
+  .enroll .box { border: 1px dashed var(--line); border-radius: 8px; padding: 10px; }
+
+  dialog { background: var(--panel); color: var(--text); border: 1px solid var(--line); border-radius: var(--radius); padding: 0; max-width: min(92vw, 900px); }
+  dialog::backdrop { background: rgba(0,0,0,.7); }
+  dialog img { display: block; max-width: 100%; max-height: 80vh; }
+  dialog .row { padding: 10px; justify-content: space-between; }
+  .toast {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%); background: var(--panel-2);
+    border: 1px solid var(--line); border-radius: 8px; padding: 10px 14px; display: none; z-index: 20; max-width: calc(100vw - 32px);
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Home Security Console</h1>
+  <div class="pills">
+    <span class="pill" title="Vision server (ESP32-CAM pipeline)"><span class="dot" id="p-vision"></span><span id="t-vision">Vision</span></span>
+    <span class="pill" title="Face recognition gallery"><span class="dot" id="p-recog"></span><span id="t-recog">Recognition</span></span>
+    <span class="pill" title="Speech-to-text, TTS and LLM"><span class="dot" id="p-audio"></span><span id="t-audio">Audio</span></span>
+    <span class="pill" title="Conversation session"><span class="dot" id="p-session"></span><span id="t-session">No session</span></span>
+  </div>
+</header>
+
+<main>
+  <div class="col">
+    <!-- Live video -->
+    <section class="card">
+      <h2>Live camera <span class="right" id="cam-src">—</span></h2>
+      <div class="video-wrap">
+        <img id="video" alt="Live annotated camera feed">
+        <div class="video-offline" id="video-offline">
+          <strong>Vision server offline</strong>
+          <span>Start it with <code>python app.py</code> in <code>video/smart-home-security-system</code>.</span>
+          <button onclick="reconnectVideo()">Retry</button>
+        </div>
+      </div>
+      <div class="body">
+        <div class="stats">
+          <div class="stat"><div class="k">State</div><div class="v" id="s-state">—</div></div>
+          <div class="stat"><div class="k">People</div><div class="v" id="s-humans">—</div></div>
+          <div class="stat"><div class="k">Face quality</div><div class="v" id="s-quality">—</div></div>
+          <div class="stat"><div class="k">Stability</div><div class="v" id="s-stable">—</div></div>
+          <div class="stat"><div class="k">Rotation</div><div class="v" id="s-rot">—</div></div>
+          <div class="stat" title="Frames per second shown in the viewer / processed by the AI"><div class="k">Viewer · AI FPS</div><div class="v" id="s-fps">—</div></div>
+        </div>
+        <div class="status-line" id="s-status">—</div>
+      </div>
+    </section>
+
+    <!-- Camera settings -->
+    <section class="card">
+      <h2>Camera settings</h2>
+      <div class="body">
+        <div class="row">
+          <label class="f">Source
+            <select id="c-source"><option value="esp32">ESP32-CAM</option><option value="webcam">Laptop webcam</option></select>
+          </label>
+          <label class="f" style="flex:1; min-width:200px">ESP32-CAM stream URL
+            <input id="c-url" placeholder="http://192.168.1.50:81/stream">
+          </label>
+          <label class="f">Rotation
+            <select id="c-rot">
+              <option value="auto">Auto</option><option value="0">0°</option><option value="90">90°</option>
+              <option value="180">180°</option><option value="270">270°</option>
+            </select>
+          </label>
+          <label class="f">Mirror
+            <select id="c-flip"><option value="false">Off</option><option value="true">On</option></select>
+          </label>
+          <button class="primary" style="align-self:flex-end" onclick="applyCamera()">Apply</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- History tabs -->
+    <section class="card">
+      <div class="tabs">
+        <button class="tab active" data-tab="visits">Camera visits</button>
+        <button class="tab" data-tab="people">Known people</button>
+        <button class="tab" data-tab="convos">Conversations</button>
+        <button class="tab" data-tab="events">Events</button>
+      </div>
+
+      <div class="pane active" id="pane-visits">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Photo</th><th>#</th><th>Time</th><th>Identity</th><th>Match</th><th>Capture</th><th></th></tr></thead>
+            <tbody id="visits-body"><tr><td colspan="7" class="hint">Loading…</td></tr></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="pane" id="pane-people">
+        <div class="body">
+          <div class="enroll">
+            <div class="box">
+              <strong>Enroll from live camera</strong>
+              <p class="hint">The person stands 0.5–1.5 m from the camera and turns their head slightly while samples are captured (~5 s).</p>
+              <div class="row">
+                <input id="e-live-name" placeholder="Name" style="flex:1">
+                <button class="primary" id="e-live-btn" onclick="enrollLive()">Capture</button>
+              </div>
+            </div>
+            <div class="box">
+              <strong>Enroll from a photo</strong>
+              <p class="hint">A clear, front-facing photo with one face.</p>
+              <div class="row">
+                <input id="e-img-name" placeholder="Name" style="flex:1">
+                <input type="file" id="e-img-file" accept="image/*" style="max-width:100%">
+                <button onclick="enrollImage()">Upload</button>
+              </div>
+            </div>
+          </div>
+          <div class="people" id="people-grid"></div>
+        </div>
+      </div>
+
+      <div class="pane" id="pane-convos">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Time</th><th>Visitor</th><th>Purpose</th><th>Outcome</th><th>Turns</th></tr></thead>
+            <tbody id="convos-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <div class="pane" id="pane-events">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Received</th><th>Event</th><th>Visit</th><th>Identity</th></tr></thead>
+            <tbody id="events-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <div class="col side">
+    <!-- At the door -->
+    <section class="card">
+      <h2>At the door</h2>
+      <div class="body">
+        <div class="door">
+          <div id="door-photo"><div class="face-ph">No face</div></div>
+          <div>
+            <div class="who"><span id="door-name">Nobody</span><span class="badge" id="door-badge">idle</span></div>
+            <div class="meta" id="door-meta">Waiting for a visitor…</div>
+            <div class="bar" title="Match similarity (threshold marks a known person)"><i id="door-bar"></i></div>
+            <div class="row" style="margin-top:10px">
+              <button onclick="nameLastVisit()" id="btn-name-last" disabled>Name last visitor</button>
+              <button onclick="greetVisitor()" class="primary">Greet visitor</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Conversation -->
+    <section class="card">
+      <h2>Conversation <span class="right" id="conv-state">—</span></h2>
+      <div class="body" style="padding-bottom:0">
+        <div class="session-info">
+          <div class="stat"><div class="k">Visitor</div><div class="v" id="conv-name">—</div></div>
+          <div class="stat"><div class="k">Purpose</div><div class="v" id="conv-purpose">—</div></div>
+          <div class="stat"><div class="k">Camera ID</div><div class="v" id="conv-camid">—</div></div>
+        </div>
+        <div class="handsfree">
+          <label class="switch" title="Start talking automatically when the camera captures a visitor">
+            <input type="checkbox" id="auto-on" onchange="setAuto(this.checked)"> Hands-free
+          </label>
+          <span class="mic" id="mic-ind"><span class="dot"></span><span id="mic-text">Mic off</span></span>
+          <span class="hint" id="auto-detail" style="flex:1; min-width:140px"></span>
+          <button id="btn-auto-stop" class="danger" onclick="stopAuto()" style="display:none">Stop</button>
+        </div>
+        <div class="row" style="margin-top:10px" id="manual-controls">
+          <label class="f">Microphone
+            <select id="a-mic"><option value="esp32">ESP32 INMP441</option><option value="browser">This device</option></select>
+          </label>
+          <label class="f">Speaker
+            <select id="a-spk"><option value="esp32">ESP32 speaker</option><option value="laptop">This device</option></select>
+          </label>
+          <button id="btn-talk" style="align-self:flex-end" onclick="toggleTalk()">Record visitor</button>
+          <button style="align-self:flex-end" class="danger" onclick="endSession()">End session</button>
+        </div>
+      </div>
+      <div class="chat" id="chat"><div class="empty">No conversation yet. It starts by itself when the camera captures a visitor.</div></div>
+      <div class="composer">
+        <input id="text-in" placeholder="Type what the visitor says…" onkeydown="if(event.key==='Enter') sendText()">
+        <button onclick="sendText()" id="btn-send">Send</button>
+      </div>
+      <div class="log" id="log"></div>
+    </section>
+  </div>
+</main>
+
+<dialog id="viewer">
+  <img id="viewer-img" alt="Visit photo">
+  <div class="row"><span id="viewer-cap" class="hint"></span><button onclick="viewer.close()">Close</button></div>
+</dialog>
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const V = '/api/vision';
+let vision = null, lastVisitId = null, sessionActive = false;
+let recording = false, mediaRecorder = null, audioChunks = [];
+let lastTranscriptKey = '';
+
+function esc(s) { return String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
+function setDot(id, cls) { $(id).className = 'dot ' + (cls || ''); }
+function toast(msg, ms = 3500) { const t = $('toast'); t.textContent = msg; t.style.display = 'block'; clearTimeout(t._h); t._h = setTimeout(() => t.style.display = 'none', ms); }
+function log(msg) { const l = $('log'); const d = document.createElement('div'); d.textContent = `${new Date().toLocaleTimeString()}  ${msg}`; l.prepend(d); }
+function fmtTime(iso) { if (!iso) return '—'; const d = new Date(iso.replace(' ', 'T')); return isNaN(d) ? iso : d.toLocaleString([], {month:'short', day:'numeric', hour:'2-digit', minute:'2-digit', second:'2-digit'}); }
+async function j(url, opts) { const r = await fetch(url, opts); if (!r.ok) throw new Error((await r.text()) || r.statusText); return r.json(); }
+
+// ── Tabs ─────────────────────────────────────────
+document.querySelectorAll('.tab').forEach(b => b.onclick = () => {
+  document.querySelectorAll('.tab').forEach(x => x.classList.toggle('active', x === b));
+  document.querySelectorAll('.pane').forEach(p => p.classList.toggle('active', p.id === 'pane-' + b.dataset.tab));
+  try { localStorage.setItem('dash-tab', b.dataset.tab); } catch (e) {}
+  refreshTabs();
+});
+try { const t = localStorage.getItem('dash-tab'); if (t) document.querySelector(`.tab[data-tab="${t}"]`)?.click(); } catch (e) {}
+
+// ── Video ────────────────────────────────────────
+function reconnectVideo() { $('video').src = `${V}/video_feed?t=${Date.now()}`; }
+$('video').onerror = () => { $('video-offline').style.display = 'flex'; setTimeout(reconnectVideo, 4000); };
+$('video').onload = () => { $('video-offline').style.display = 'none'; };
+reconnectVideo();
+
+// ── Vision status ────────────────────────────────
+async function pollVision() {
+  try {
+    const s = await j(`${V}/status`);
+    vision = s;
+    const connected = s.camera_connected;
+    setDot('p-vision', connected ? 'ok' : 'warn');
+    $('t-vision').textContent = connected ? `Camera ${s.camera_source === 'esp32' ? 'ESP32' : 'webcam'} · ${s.display_fps || s.processing_fps || 0} fps` : 'Camera connecting…';
+    $('cam-src').textContent = s.camera_source === 'esp32' ? s.active_camera_index : 'Laptop webcam';
+    const r = s.recognition || {};
+    setDot('p-recog', !r.enabled ? 'bad' : (r.people ? 'ok' : 'warn'));
+    $('t-recog').textContent = !r.enabled ? 'Recognition off' : `${r.people} known ${r.people === 1 ? 'person' : 'people'}`;
+
+    $('s-state').textContent = (s.capture_state || '—').replace(/_/g, ' ');
+    $('s-humans').textContent = `${s.human_count} · ${s.faces_detected} face${s.faces_detected === 1 ? '' : 's'}`;
+    $('s-quality').textContent = s.face_detected ? s.face_quality.toFixed(2) : '—';
+    $('s-stable').textContent = s.stability_progress;
+    $('s-rot').textContent = `${s.rotation}°${s.rotation_mode === 'auto' ? ' (auto)' : ''}`;
+    $('s-fps').textContent = `${s.display_fps || s.processing_fps || 0} · ${s.processing_fps ?? 0}`;
+    $('s-status').textContent = s.status;
+    if ($('video-offline').style.display === 'flex') reconnectVideo();
+    renderDoor(s);
+    syncCameraForm(s);
+  } catch (e) {
+    vision = null;
+    setDot('p-vision', 'bad'); $('t-vision').textContent = 'Vision offline';
+    setDot('p-recog', ''); $('t-recog').textContent = 'Recognition —';
+    $('video-offline').style.display = 'flex';
+  }
+}
+
+let formSynced = false;
+function syncCameraForm(s) {
+  if (formSynced) return;
+  formSynced = true;
+  $('c-source').value = s.camera_source;
+  $('c-url').value = s.esp32_url || '';
+  j(`${V}/camera/config`).then(c => {
+    $('c-rot').value = String(c.rotation ?? 'auto');
+    $('c-flip').value = String(!!c.hflip);
+  }).catch(() => {});
+}
+
+async function applyCamera() {
+  const rot = $('c-rot').value;
+  try {
+    await j(`${V}/camera/configure`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ source: $('c-source').value, esp32_url: $('c-url').value.trim(),
+                             rotation: rot === 'auto' ? 'auto' : Number(rot), hflip: $('c-flip').value === 'true' })
+    });
+    toast('Camera settings applied'); setTimeout(reconnectVideo, 800);
+  } catch (e) { toast('Could not apply camera settings: ' + e.message); }
+}
+
+function renderDoor(s) {
+  const id = s.identity || {};
+  const last = s.last_visit_identity || {};
+  const facePresent = s.face_detected;
+  let name = 'Nobody', badge = 'idle', badgeCls = '', meta = 'Waiting for a visitor…', score = 0;
+
+  if (facePresent && id.status === 'known') {
+    name = id.name; badge = 'known'; badgeCls = 'known'; score = id.score;
+    meta = `Live match ${id.score.toFixed(2)} · ${id.votes} recent frames agree`;
+  } else if (facePresent && id.status === 'unknown') {
+    name = 'Unknown visitor'; badge = 'unknown'; badgeCls = 'unknown'; score = Math.max(0, id.score || 0);
+    meta = id.gallery_empty ? 'Nobody is enrolled yet — add people under “Known people”.' : `Closest match ${score.toFixed(2)} is below the threshold.`;
+  } else if (facePresent && id.status === 'too_small') {
+    name = 'Visitor'; badge = 'too far'; meta = 'Face too small to identify — the visitor should step closer.';
+  } else if (facePresent && id.status === 'tilted') {
+    name = 'Visitor'; badge = 'tilted'; meta = 'Head tilted — waiting for a straight-on view.';
+  } else if (s.human_detected) {
+    name = 'Person detected'; badge = 'no face'; meta = s.status;
+  } else if (last.visit_id) {
+    name = last.known ? last.name : 'Unknown visitor';
+    badge = 'last visit'; badgeCls = last.known ? 'known' : 'unknown'; score = Math.max(0, last.score || 0);
+    meta = `Visit #${last.visit_id} · ${last.known ? 'recognized' : 'not recognized'} (${(last.score || 0).toFixed(2)}, ${last.samples} samples)`;
+  }
+  $('door-name').textContent = name;
+  $('door-badge').textContent = badge; $('door-badge').className = 'badge ' + badgeCls;
+  $('door-meta').textContent = meta;
+  $('door-bar').style.width = `${Math.min(100, Math.max(0, score) * 100)}%`;
+  $('door-bar').style.background = badgeCls === 'known' ? 'var(--ok)' : badgeCls === 'unknown' ? 'var(--bad)' : 'var(--accent)';
+  $('conv-camid').textContent = (facePresent && id.status === 'known') ? id.name : (last.known ? last.name : '—');
+
+  const vid = last.visit_id || s.current_visit_id;
+  if (vid && vid !== lastVisitId) {
+    lastVisitId = vid;
+    $('btn-name-last').disabled = false;
+    $('door-photo').innerHTML = `<img src="${V}/visits/${vid}/face_image?t=${Date.now()}" alt="Visitor face" onerror="this.src='${V}/visits/${vid}/image'">`;
+    refreshVisits();
+  }
+}
+
+async function nameLastVisit() {
+  if (!lastVisitId) return;
+  const name = prompt(`Who is the visitor in visit #${lastVisitId}?`);
+  if (name) await nameVisit(lastVisitId, name);
+}
+
+async function nameVisit(visitId, name) {
+  try {
+    const r = await j(`${V}/visits/${visitId}/name`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name })
+    });
+    toast(r.samples_enrolled ? `Saved ${r.name} — ${r.samples_enrolled} face sample(s) enrolled` : `Saved ${r.name} (no usable face sample in this visit)`);
+    refreshVisits(); refreshPeople();
+  } catch (e) { toast('Could not save name: ' + e.message); }
+}
+
+// ── Visits / people / logs / events ──────────────
+async function refreshVisits() {
+  try {
+    const visits = (await j(`${V}/visits`)).slice(0, 40);
+    $('visits-body').innerHTML = visits.length ? visits.map(v => {
+      const score = v.recognition_score != null ? v.recognition_score.toFixed(2) : '—';
+      const who = v.recognized_person
+        ? `${esc(v.recognized_person)} <span class="hint">${v.label_source === 'manual' ? '(named)' : v.label_source === 'auto' ? '' : '(legacy)'}</span>`
+        : '<span class="hint">Unknown</span>';
+      const img = v.image_path ? `<img class="thumb" loading="lazy" src="${V}/visits/${v.visit_id}/image" onclick="openViewer(${v.visit_id})" alt="Visit ${v.visit_id}">` : '';
+      return `<tr><td>${img}</td><td class="num">${v.visit_id}</td><td>${fmtTime(v.timestamp)}</td><td>${who}</td>
+        <td class="num">${score}</td><td>${esc(v.capture_status)}</td>
+        <td><button onclick="promptName(${v.visit_id})">Name</button></td></tr>`;
+    }).join('') : '<tr><td colspan="7" class="hint">No visits recorded yet.</td></tr>';
+  } catch (e) { $('visits-body').innerHTML = '<tr><td colspan="7" class="hint">Vision server offline.</td></tr>'; }
+}
+function promptName(id) { const n = prompt(`Name for the visitor in visit #${id}:`); if (n) nameVisit(id, n); }
+function openViewer(id) { $('viewer-img').src = `${V}/visits/${id}/image`; $('viewer-cap').textContent = `Visit #${id}`; $('viewer').showModal(); }
+
+async function refreshPeople() {
+  try {
+    const people = await j(`${V}/people`);
+    $('people-grid').innerHTML = people.length ? people.map(p => `
+      <div class="person">
+        ${p.last_visit_id ? `<img src="${V}/people/${p.person_id}/image" alt="${esc(p.name)}" loading="lazy">` : '<div class="face-ph">No photo</div>'}
+        <strong>${esc(p.name)}</strong>
+        <span class="hint">${p.samples} face sample${p.samples === 1 ? '' : 's'}${p.samples < 3 ? ' — add more for reliable matching' : ''}</span>
+        <span class="hint">Last seen ${p.last_seen ? fmtTime(p.last_seen) : '—'}</span>
+        <button class="danger" onclick="deletePerson(${p.person_id}, '${esc(p.name).replace(/'/g, "\\'")}')">Remove</button>
+      </div>`).join('') : '<p class="hint">Nobody enrolled yet. Every visitor is “Unknown” until you enroll them here or name a visit.</p>';
+  } catch (e) { $('people-grid').innerHTML = '<p class="hint">Vision server offline.</p>'; }
+}
+
+async function enrollLive() {
+  const name = $('e-live-name').value.trim();
+  if (!name) return toast('Enter a name first');
+  const btn = $('e-live-btn'); btn.disabled = true; btn.textContent = 'Capturing…';
+  try {
+    const r = await j(`${V}/people/enroll_live`, { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ name }) });
+    toast(`Enrolled ${r.name} with ${r.samples_enrolled} samples`); $('e-live-name').value = ''; refreshPeople();
+  } catch (e) { toast('Enrollment failed: ' + e.message, 6000); }
+  finally { btn.disabled = false; btn.textContent = 'Capture'; }
+}
+
+async function enrollImage() {
+  const name = $('e-img-name').value.trim(), file = $('e-img-file').files[0];
+  if (!name || !file) return toast('Enter a name and choose a photo');
+  try {
+    const r = await j(`${V}/people/enroll_image?name=${encodeURIComponent(name)}`, { method: 'POST', body: file, headers: {'Content-Type': file.type || 'image/jpeg'} });
+    toast(`Enrolled ${r.name} from photo`); $('e-img-name').value = ''; $('e-img-file').value = ''; refreshPeople();
+  } catch (e) { toast('Enrollment failed: ' + e.message, 6000); }
+}
+
+async function deletePerson(id, name) {
+  if (!confirm(`Remove ${name} and all their face samples?`)) return;
+  try { await j(`${V}/people/${id}`, { method: 'DELETE' }); toast(`Removed ${name}`); refreshPeople(); }
+  catch (e) { toast('Could not remove: ' + e.message); }
+}
+
+async function refreshConvos() {
+  try {
+    const { logs } = await j('/api/visit_logs?limit=30');
+    const cls = { APPROVED: 'known', DENIED: 'unknown' };
+    $('convos-body').innerHTML = logs.length ? logs.map(l => `<tr><td>${fmtTime(l.created_at)}</td><td>${esc(l.visitor_name || '—')}</td>
+      <td>${esc(l.visitor_purpose || '—')}</td><td><span class="badge ${cls[l.status] || ''}">${esc(l.status)}</span></td><td class="num">${l.turns}</td></tr>`).join('')
+      : '<tr><td colspan="5" class="hint">No conversations logged yet.</td></tr>';
+  } catch (e) { $('convos-body').innerHTML = '<tr><td colspan="5" class="hint">Could not load conversations.</td></tr>'; }
+}
+
+async function refreshEvents() {
+  try {
+    const { events } = await j('/api/events');
+    const label = { visit_started: 'Visitor arrived', visit_captured: 'Face captured', visit_timeout: 'Left / no clear face' };
+    $('events-body').innerHTML = events.length ? events.map(e => {
+      const id = e.identity || {};
+      const who = e.type === 'visit_started' ? '—' : id.known ? `${esc(id.name)} (${(id.score || 0).toFixed(2)})` : 'Unknown';
+      return `<tr><td>${fmtTime(e.received_at)}</td><td>${label[e.type] || esc(e.type)}</td><td class="num">#${e.visit_id ?? '—'}</td><td>${who}</td></tr>`;
+    }).join('') : '<tr><td colspan="4" class="hint">No events yet. The vision server posts here when a visitor arrives.</td></tr>';
+  } catch (e) {}
+}
+
+function refreshTabs() {
+  const active = document.querySelector('.tab.active').dataset.tab;
+  ({ visits: refreshVisits, people: refreshPeople, convos: refreshConvos, events: refreshEvents })[active]();
+}
+
+// ── Audio / conversation ─────────────────────────
+async function pollAudio() {
+  try {
+    const h = await j('/api/health');
+    setDot('p-audio', h.components.llm ? 'ok' : 'warn');
+    $('t-audio').textContent = h.components.llm ? `Audio · ${h.config.ollama_model}` : 'Audio · LLM offline';
+  } catch (e) { setDot('p-audio', 'bad'); $('t-audio').textContent = 'Audio offline'; }
+}
+
+async function pollTranscript() {
+  try {
+    const t = await j('/api/sessions/transcript');
+    sessionActive = t.active;
+    setDot('p-session', t.active ? 'ok' : '');
+    $('t-session').textContent = t.active ? 'Session active' : 'No session';
+    $('conv-state').textContent = t.state ? t.state.replace(/_/g, ' ') : '—';
+    $('conv-name').textContent = t.visitor_name || '—';
+    $('conv-purpose').textContent = t.visitor_purpose || '—';
+    const key = (t.session_id || '') + ':' + t.messages.length;
+    if (key === lastTranscriptKey) return;
+    lastTranscriptKey = key;
+    if (!t.messages.length) { if (!t.session_id) return; $('chat').innerHTML = '<div class="empty">Session started…</div>'; return; }
+    $('chat').innerHTML = t.messages.map(m => m.role === 'tool'
+      ? `<div class="msg tool">${esc(m.text)}</div>`
+      : `<div class="msg ${m.role}"><span class="who-s">${m.role === 'visitor' ? 'Visitor' : 'Assistant'}</span>${esc(m.text)}</div>`).join('');
+    $('chat').scrollTop = $('chat').scrollHeight;
+  } catch (e) {}
+}
+
+function speaker() { return $('a-spk').value; }
+function playWav(blob) { const a = new Audio(URL.createObjectURL(blob)); a.play().catch(() => log('Browser blocked autoplay — click the page once to allow audio.')); }
+
+// ── Hands-free conversation ──────────────────────
+let autoEnabled = false;
+const MIC_LABEL = { listening: 'Mic on · listening', hearing: 'Mic on · hearing visitor', thinking: 'Mic off · thinking',
+                    speaking: 'Mic off · speaking', greeting: 'Mic off · greeting', error: 'Error', idle: 'Mic off' };
+async function pollAuto() {
+  try {
+    const a = await j('/api/auto');
+    autoEnabled = a.enabled;
+    $('auto-on').checked = a.enabled;
+    $('manual-controls').style.display = a.enabled ? 'none' : 'flex';
+    const cls = a.mic_on ? 'on' : ({ speaking: 'speaking', greeting: 'speaking', thinking: 'thinking', error: 'error' })[a.state] || '';
+    $('mic-ind').className = 'mic ' + cls;
+    $('mic-text').textContent = MIC_LABEL[a.state] || a.state;
+    $('btn-auto-stop').style.display = a.running ? 'inline-block' : 'none';
+    $('auto-detail').textContent = !a.enabled ? 'Off — use the manual controls below.'
+      : a.state === 'error' ? a.detail
+      : a.running ? (a.state === 'speaking' ? `“${a.detail}”` : a.detail)
+      : (a.esp32_connected ? 'Waiting for the camera to capture a visitor.' : 'Waiting for a visitor (ESP32 audio board not connected yet).');
+  } catch (e) {}
+}
+async function setAuto(on) {
+  try { await j('/api/auto', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ enabled: on }) }); }
+  catch (e) { toast('Could not change hands-free mode: ' + e.message); }
+  pollAuto();
+}
+async function stopAuto() { try { await j('/api/auto/stop', { method: 'POST' }); } catch (e) {} pollAuto(); pollTranscript(); }
+
+async function greetVisitor() {
+  if (autoEnabled) {
+    try { await j('/api/auto/start', { method: 'POST' }); log('Hands-free conversation started'); }
+    catch (e) { toast('Could not start: ' + e.message); }
+    pollAuto(); return;
+  }
+  try {
+    await j('/api/sessions', { method: 'POST' });
+    log('Session started');
+    if (speaker() === 'esp32') {
+      const r = await j('/api/test/esp32/greeting', { method: 'POST' });
+      log(r.played_on_esp32 ? 'Greeting played on ESP32 speaker' : 'ESP32 speaker playback failed (is the ESP32 plugged in?)');
+    } else {
+      const fd = new FormData(); fd.append('file', new Blob([], { type: 'audio/wav' }), 'empty.wav');
+      const r = await fetch('/api/test/audio?target_speaker=laptop', { method: 'POST', body: fd });
+      if (r.ok) playWav(await r.blob());
+    }
+  } catch (e) { toast('Could not start session: ' + e.message); }
+  pollTranscript();
+}
+
+async function endSession() {
+  try { await fetch('/api/sessions', { method: 'DELETE' }); log('Session ended'); } catch (e) {}
+  pollTranscript(); refreshConvos();
+}
+
+async function sendText() {
+  const text = $('text-in').value.trim();
+  if (!text) return;
+  $('btn-send').disabled = true;
+  try {
+    if (!sessionActive) await greetVisitor();
+    $('text-in').value = '';
+    const r = await j(`/api/test/text?text=${encodeURIComponent(text)}&target_speaker=${speaker()}`, { method: 'POST' });
+    if (speaker() === 'esp32' && r.audio_available) log(r.played_on_esp32 ? 'Reply played on ESP32 speaker' : 'ESP32 speaker playback failed');
+  } catch (e) { toast('Error: ' + e.message); }
+  finally { $('btn-send').disabled = false; pollTranscript(); }
+}
+
+async function toggleTalk() {
+  const btn = $('btn-talk');
+  if (!recording) {
+    if (!sessionActive) await greetVisitor();
+    try {
+      if ($('a-mic').value === 'esp32') {
+        const r = await fetch('/api/test/esp32/start', { method: 'POST' });
+        if (!r.ok) throw new Error((await r.json()).detail || 'ESP32 not connected');
+      } else {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } });
+        audioChunks = [];
+        mediaRecorder = new MediaRecorder(stream);
+        mediaRecorder.ondataavailable = e => e.data.size && audioChunks.push(e.data);
+        mediaRecorder.onstop = () => { stream.getTracks().forEach(t => t.stop()); sendBrowserAudio(); };
+        mediaRecorder.start(100);
+      }
+      recording = true; btn.textContent = 'Stop & send'; btn.classList.add('rec');
+      log('Recording visitor…');
+    } catch (e) { toast('Microphone error: ' + e.message, 6000); }
+    return;
+  }
+  recording = false; btn.textContent = 'Processing…'; btn.classList.remove('rec'); btn.disabled = true;
+  if ($('a-mic').value === 'esp32') {
+    try {
+      const r = await fetch(`/api/test/esp32/stop?target_speaker=${speaker()}`, { method: 'POST' });
+      await handleAudioReply(r);
+    } finally { resetTalk(); }
+  } else if (mediaRecorder) {
+    mediaRecorder.stop();
+  }
+}
+function resetTalk() { const b = $('btn-talk'); b.disabled = false; b.textContent = 'Record visitor'; pollTranscript(); }
+
+async function sendBrowserAudio() {
+  try {
+    const buf = await new Blob(audioChunks).arrayBuffer();
+    const ctx = new AudioContext({ sampleRate: 16000 });
+    const audio = await ctx.decodeAudioData(buf);
+    const fd = new FormData(); fd.append('file', audioBufferToWav(audio), 'recording.wav');
+    const r = await fetch(`/api/test/audio?target_speaker=${speaker()}`, { method: 'POST', body: fd });
+    await handleAudioReply(r);
+  } catch (e) { toast('Audio error: ' + e.message); }
+  finally { resetTalk(); }
+}
+
+async function handleAudioReply(r) {
+  if (!r.ok) { toast('Server error: ' + await r.text()); return; }
+  const transcript = r.headers.get('X-Transcript');
+  log(transcript ? `Heard: “${transcript}”` : 'No speech recognised');
+  const blob = await r.blob();
+  if (speaker() === 'laptop') playWav(blob);
+  else log(r.headers.get('X-Played-Success') === 'False' ? 'ESP32 speaker playback failed' : 'Reply played on ESP32 speaker');
+}
+
+function audioBufferToWav(buffer) {
+  const data = buffer.getChannelData(0), rate = buffer.sampleRate;
+  const view = new DataView(new ArrayBuffer(44 + data.length * 2));
+  const w = (o, s) => [...s].forEach((c, i) => view.setUint8(o + i, c.charCodeAt(0)));
+  w(0, 'RIFF'); view.setUint32(4, 36 + data.length * 2, true); w(8, 'WAVE'); w(12, 'fmt ');
+  view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+  view.setUint32(24, rate, true); view.setUint32(28, rate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true);
+  w(36, 'data'); view.setUint32(40, data.length * 2, true);
+  for (let i = 0; i < data.length; i++) { const s = Math.max(-1, Math.min(1, data[i])); view.setInt16(44 + i * 2, s < 0 ? s * 0x8000 : s * 0x7FFF, true); }
+  return new Blob([view.buffer], { type: 'audio/wav' });
+}
+
+// Persist audio device choices
+['a-mic', 'a-spk'].forEach(id => {
+  try { const v = localStorage.getItem(id); if (v) $(id).value = v; } catch (e) {}
+  $(id).onchange = () => { try { localStorage.setItem(id, $(id).value); } catch (e) {} };
+});
+
+// ── Polling loops ────────────────────────────────
+pollVision(); pollAudio(); pollTranscript(); refreshTabs();
+setInterval(pollVision, 800);
+setInterval(pollTranscript, 1500);
+pollAuto(); setInterval(pollAuto, 700);
+setInterval(pollAudio, 10000);
+setInterval(() => { refreshEvents(); if (document.querySelector('.tab.active').dataset.tab !== 'events') refreshTabs(); }, 6000);
+</script>
+</body>
+</html>

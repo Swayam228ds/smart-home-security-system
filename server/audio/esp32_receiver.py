@@ -92,6 +92,11 @@ class ESP32SerialReceiver:
             logger.error("Cannot start recording: No ESP32 connected via Serial.")
             return False
             
+        # The ESP32 may have been plugged in after startup: make sure the reader thread runs
+        if self._thread is None or not self._thread.is_alive():
+            self._thread = threading.Thread(target=self._read_loop, daemon=True)
+            self._thread.start()
+
         with self._serial_lock:
             self.buffer = bytearray()
             try:
@@ -104,6 +109,17 @@ class ESP32SerialReceiver:
             self.is_recording = True
             logger.info("Started recording from ESP32 INMP441 stream")
             return True
+
+    def drain(self) -> bytes:
+        """Return and clear the mic audio captured so far, without stopping the recording."""
+        with self._serial_lock:
+            data = bytes(self.buffer)
+            self.buffer = bytearray()
+        return data
+
+    @property
+    def is_connected(self) -> bool:
+        return bool(self.serial_conn and self.serial_conn.is_open)
 
     def stop_recording(self) -> bytes:
         with self._serial_lock:

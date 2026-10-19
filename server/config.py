@@ -105,6 +105,25 @@ class Settings(BaseSettings):
     port: int = Field(default=8000, description="Server bind port")
     log_level: str = Field(default="info", description="Logging level")
 
+    # ── Vision server (ESP32-CAM face pipeline, video/smart-home-security-system) ──
+    vision_url: str = Field(
+        default="http://127.0.0.1:8080",
+        description="Base URL of the vision server proxied by the combined dashboard"
+    )
+
+    # ── Hands-free conversation (triggered by the camera) ──
+    auto_conversation: bool = Field(
+        default=True,
+        description="Start a voice conversation automatically when the camera captures a visitor"
+    )
+    auto_known_only: bool = Field(
+        default=False,
+        description="Only auto-start for visitors the face recognizer knows"
+    )
+    auto_listen_timeout_s: float = Field(default=15.0, description="End if the visitor says nothing for this long")
+    auto_max_turns: int = Field(default=12, description="Safety limit on visitor turns per conversation")
+    auto_cooldown_s: float = Field(default=30.0, description="Ignore new camera visits this long after a conversation")
+
     # ── Data Paths ──
     appointments_file: str = Field(
         default=str(DATA_DIR / "appointments.json"),

@@ -379,14 +379,34 @@ To complete the unified system, development is structured into five focused phas
 2. **ESP32 Microphone**: Open `scratch/esp32_inmp441_serial.ino` in Arduino IDE. Select board **`ESP32 Dev Module`**, and upload. Connect via USB.
 
 ### 3. Launching the System
-```powershell
-# 1. Activate the Python virtual environment
-ven\Scripts\activate
+The vision server (camera + face recognition) and the audio server (mic, speaker, LLM) run as two processes.
+The audio server hosts the combined dashboard and proxies the vision API, so you only open one page.
 
-# 2. Start Local Ollama LLM
+```powershell
+# 1. Start Local Ollama LLM
 ollama run qwen2.5:7b
 
-# 3. Start Unified Server
-python -m server.main
+# 2. Vision server (port 8080): set ESP32_CAM_URL in config.py to the URL the ESP32-CAM prints
+cd video\smart-home-security-system
+venv\Scripts\python app.py
+
+# 3. Audio server + combined dashboard (port 8000), from the repo root in a second terminal
+ven\Scripts\python -m server.main
 ```
-Open **`http://localhost:8000`** in any web browser to view the live security operations dashboard.
+Open **`http://localhost:8000`** for the combined dashboard (live annotated camera, who is at the door,
+conversation, visit history, known people). The old audio test console is at `/console`.
+
+### 4. Face Recognition (ESP32-CAM)
+* **Models**: OpenCV YuNet (detection + 5 landmarks) and SFace (128-d embeddings), auto-downloaded to
+  `video/smart-home-security-system/models/` on first start.
+* **Enrolling people**: in the dashboard's *Known people* tab, either capture from the live camera
+  (person stands 0.5-1.5 m away and turns their head slightly) or upload a front-facing photo. You can also
+  press *Name* on any camera visit, which enrolls all face samples collected during that visit.
+  Nobody is recognised until they are enrolled; aim for 5+ samples per person.
+* **Matching**: cosine similarity; a person's score is the mean of their 3 best samples, threshold `0.40`
+  (`RECOGNITION_THRESHOLD`). Measured on this project's ESP32 frames: same person 0.42-0.89, different people <= 0.35.
+* **Camera orientation**: `CAMERA_ROTATION = "auto"` detects a sideways / upside-down ESP32-CAM and rotates
+  frames before detection. Set a fixed `0/90/180/270` in `config.py` or from the dashboard instead if you prefer.
+* **Firmware**: flash `video/smart-home-security-system/esp32_cam/esp32_cam_stream.ino` (stream on
+  `http://<ip>:81/stream`, snapshots on `:80/capture`). Only one client can hold the stream, so view it through
+  the dashboard rather than opening the ESP32's own page at the same time.
