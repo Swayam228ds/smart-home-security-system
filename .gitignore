@@ -5,3 +5,9 @@ data/
 *.db
 *.sqlite
 *.onnx
+*.wav
+mic testing/
+mic_speaker _test/
+venv/
+video/smart-home-security-system/
+video/smart-home-security-demo/

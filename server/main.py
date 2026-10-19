@@ -63,7 +63,17 @@ owner_manager: Optional[OwnerManager] = None
 llm_client: Optional[OllamaClient] = None
 conversation_manager: Optional[ConversationManager] = None
 pipeline: Optional[AudioPipeline] = None
+periodic_timeout_task = None
 
+async def _periodic_timeout_check():
+    """Background task to periodically clean up timed-out sessions and log them to the DB."""
+    while True:
+        await asyncio.sleep(60)
+        try:
+            if conversation_manager:
+                conversation_manager._check_timeout()
+        except Exception as e:
+            logger.error(f"Error in periodic timeout check: {e}")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -109,6 +119,10 @@ async def lifespan(app: FastAPI):
     logger.info("Starting ESP32 UDP Receiver on port 5005...")
     asyncio.create_task(esp32_receiver.start_listening())
 
+    # 6. Start periodic timeout check
+    global periodic_timeout_task
+    periodic_timeout_task = asyncio.create_task(_periodic_timeout_check())
+
     startup_elapsed = time.time() - startup_start
     logger.info(f"All systems ready in {startup_elapsed:.1f}s")
     logger.info("=" * 60)
@@ -117,6 +131,8 @@ async def lifespan(app: FastAPI):
 
     # Shutdown
     logger.info("Shutting down...")
+    if periodic_timeout_task:
+        periodic_timeout_task.cancel()
     if conversation_manager and conversation_manager.is_session_active():
         await conversation_manager.end_session()
     logger.info("Shutdown complete.")
@@ -276,13 +292,15 @@ async def _send_greeting(ws: WebSocket):
 # REST Test Endpoint — Audio Upload
 # ──────────────────────────────────────────────
 @app.post("/api/test/audio", summary="Upload audio file for testing")
-async def test_audio_upload(file: UploadFile = File(...)):
+async def test_audio_upload(file: UploadFile = File(...), target_speaker: str = "laptop"):
     """
     Test endpoint: upload a WAV audio file, get audio response.
 
     Accepts: WAV file (16kHz mono preferred, will attempt conversion)
     Returns: WAV file with the assistant's response
     """
+    from server.audio.esp32_receiver import esp32_receiver
+
     if not file.filename.lower().endswith(('.wav', '.pcm', '.raw')):
         raise HTTPException(400, "Only WAV, PCM, and RAW audio files are supported.")
 
@@ -311,6 +329,9 @@ async def test_audio_upload(file: UploadFile = File(...)):
             greeting_pcm = pipeline.tts.synthesize(sentence)
             greeting_audio += greeting_pcm
             
+        if target_speaker == "esp32":
+            esp32_receiver.play_audio(greeting_audio)
+
         response_wav = _pcm_to_wav(greeting_audio)
         return Response(
             content=response_wav,
@@ -319,11 +340,15 @@ async def test_audio_upload(file: UploadFile = File(...)):
                 "Content-Disposition": "attachment; filename=greeting.wav",
                 "X-Session-Active": "True",
                 "X-Session-State": "GREETING",
+                "X-Played-On": target_speaker,
             },
         )
 
     # Process through pipeline
     response_pcm, transcript = await pipeline.process_full_audio(pcm_data)
+
+    if target_speaker == "esp32":
+        esp32_receiver.play_audio(response_pcm)
 
     # Package as WAV
     response_wav = _pcm_to_wav(response_pcm)
@@ -341,18 +366,21 @@ async def test_audio_upload(file: UploadFile = File(...)):
                 conversation_manager.current_session.state.name
                 if conversation_manager.current_session else "NONE"
             ),
-            "X-Transcript": safe_transcript
+            "X-Transcript": safe_transcript,
+            "X-Played-On": target_speaker,
         },
     )
 
 @app.post("/api/test/esp32/start", summary="Start recording from ESP32")
 async def esp32_start_recording():
     from server.audio.esp32_receiver import esp32_receiver
+    if not esp32_receiver._ensure_connected():
+        raise HTTPException(status_code=400, detail="ESP32 not connected. Please ensure it is plugged in and the Arduino Serial Monitor is closed.")
     esp32_receiver.start_recording()
     return {"status": "recording"}
 
 @app.post("/api/test/esp32/stop", summary="Stop recording from ESP32 and process")
-async def esp32_stop_recording():
+async def esp32_stop_recording(target_speaker: str = "esp32"):
     from server.audio.esp32_receiver import esp32_receiver
     pcm_data = esp32_receiver.stop_recording()
     
@@ -367,6 +395,10 @@ async def esp32_stop_recording():
             greeting_pcm = pipeline.tts.synthesize(sentence)
             greeting_audio += greeting_pcm
             
+        played = False
+        if target_speaker == "esp32" and greeting_audio:
+            played = esp32_receiver.play_audio(greeting_audio)
+
         response_wav = _pcm_to_wav(greeting_audio)
         return Response(
             content=response_wav,
@@ -375,11 +407,18 @@ async def esp32_stop_recording():
                 "Content-Disposition": "attachment; filename=greeting.wav",
                 "X-Session-Active": "True",
                 "X-Session-State": "GREETING",
+                "X-Played-On": target_speaker,
+                "X-Played-Success": str(played),
             },
         )
 
     # Process through pipeline
     response_pcm, transcript = await pipeline.process_full_audio(pcm_data)
+
+    played = False
+    if target_speaker == "esp32" and response_pcm:
+        played = esp32_receiver.play_audio(response_pcm)
+
     response_wav = _pcm_to_wav(response_pcm)
     safe_transcript = transcript.encode('ascii', 'ignore').decode('ascii') if transcript else ""
 
@@ -393,12 +432,43 @@ async def esp32_stop_recording():
                 conversation_manager.current_session.state.name
                 if conversation_manager.current_session else "NONE"
             ),
-            "X-Transcript": safe_transcript
+            "X-Transcript": safe_transcript,
+            "X-Played-On": target_speaker,
+            "X-Played-Success": str(played),
         },
     )
 
+@app.post("/api/test/esp32/greeting", summary="Trigger and play greeting through ESP32 speaker")
+async def esp32_play_greeting():
+    """Generates greeting and plays it directly through ESP32 MAX98357A speaker."""
+    from server.audio.esp32_receiver import esp32_receiver
+    if not conversation_manager.is_session_active():
+        await conversation_manager.start_session()
+        pipeline.reset()
+
+    greeting_text = ""
+    greeting_audio = b""
+    async for sentence in conversation_manager.process_input(""):
+        greeting_text += sentence + " "
+        greeting_pcm = pipeline.tts.synthesize(sentence)
+        greeting_audio += greeting_pcm
+
+    greeting_text = greeting_text.strip()
+    if not greeting_text:
+        greeting_text = "Greeting visitor, please state your name and the purpose of your visit."
+        greeting_audio = pipeline.tts.synthesize(greeting_text)
+
+    played = esp32_receiver.play_audio(greeting_audio)
+    return {
+        "status": "ok",
+        "response_text": greeting_text,
+        "played_on_esp32": played,
+        "bytes_sent": len(greeting_audio),
+        "session_active": conversation_manager.is_session_active(),
+    }
+
 @app.post("/api/test/text", summary="Send text input for testing")
-async def test_text_input(text: str):
+async def test_text_input(text: str, target_speaker: str = "laptop"):
     """
     Test endpoint: send text directly (bypasses STT).
     Returns JSON with the assistant's text response and audio as WAV.
@@ -419,6 +489,11 @@ async def test_text_input(text: str):
             
         full_response = " ".join(response_sentences)
         
+        played_on_esp32 = False
+        if target_speaker == "esp32" and response_audio:
+            from server.audio.esp32_receiver import esp32_receiver
+            played_on_esp32 = esp32_receiver.play_audio(response_audio)
+
         return JSONResponse({
             "response_text": full_response,
             "session_active": conversation_manager.is_session_active(),
@@ -431,6 +506,8 @@ async def test_text_input(text: str):
                 if conversation_manager.current_session else None
             ),
             "audio_available": len(response_audio) > 0,
+            "played_on_esp32": played_on_esp32,
+            "played_on": target_speaker,
         })
 
     # If session is already active, process the user's text normally
@@ -440,6 +517,11 @@ async def test_text_input(text: str):
         response_audio += sentence_pcm
 
     full_response = " ".join(response_sentences)
+
+    played_on_esp32 = False
+    if target_speaker == "esp32" and response_audio:
+        from server.audio.esp32_receiver import esp32_receiver
+        played_on_esp32 = esp32_receiver.play_audio(response_audio)
 
     return JSONResponse({
         "response_text": full_response,
@@ -453,6 +535,8 @@ async def test_text_input(text: str):
             if conversation_manager.current_session else None
         ),
         "audio_available": len(response_audio) > 0,
+        "played_on_esp32": played_on_esp32,
+        "played_on": target_speaker,
     })
 
 

@@ -444,13 +444,40 @@
                     </svg>
                 </button>
                 <div class="mic-label" id="mic-label">Click to start recording</div>
-                <div style="margin-top: 15px;">
-                    <select id="mic-selector" class="text-input" style="width: auto; padding: 5px; cursor: pointer;">
-                        <option value="laptop">Laptop Mic</option>
-                        <option value="esp32">ESP32 Mic (USB Serial)</option>
+                <div style="margin-top: 15px; display: flex; flex-direction: column; align-items: center; gap: 6px;">
+                    <label for="audio-device-selector" style="font-size: 0.8rem; color: var(--text-muted); font-weight: 500;">
+                        🎙 & 🔊 Audio I/O Device:
+                    </label>
+                    <select id="audio-device-selector" class="text-input" style="width: auto; padding: 6px 12px; cursor: pointer; font-weight: 600; font-size: 0.85rem; border-color: var(--primary);" onchange="onAudioDeviceChange()">
+                        <option value="laptop">💻 Computer Mic & Speaker</option>
+                        <option value="esp32">📻 ESP32 Setup (INMP441 Mic + MAX98357A Speaker)</option>
                     </select>
                 </div>
                 <div class="mic-hint" style="margin-top: 10px;">Or type a message below</div>
+            </div>
+
+            <!-- Camera Monitor Section -->
+            <div class="card" style="grid-column: 1 / -1;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+                    <div class="card-title" style="margin-bottom: 0;">📷 Doorbell Camera Feed (ESP32-CAM)</div>
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <input type="text" id="camera-stream-url" placeholder="ESP32 Stream URL (e.g. http://192.168.1.50:81/stream)"
+                               value="http://192.168.1.50:81/stream" class="text-input" style="padding: 4px 8px; font-size: 0.8rem; width: 240px;">
+                        <button class="btn-sm" onclick="connectCameraStream()">Connect</button>
+                        <button class="btn-sm" onclick="toggleCameraView()" id="btn-cam-view">Hide View</button>
+                        <a href="http://localhost:8080" target="_blank" class="btn-sm" style="text-decoration: none; display: inline-flex; align-items: center;">Vision Dashboard ↗</a>
+                    </div>
+                </div>
+                <div id="camera-container" style="text-align: center; background: #000; border-radius: 8px; overflow: hidden; max-height: 360px; display: flex; align-items: center; justify-content: center; position: relative;">
+                    <img id="doorbell-camera-img" src="http://192.168.1.50:81/stream" alt="Doorbell Camera Stream"
+                         style="max-width: 100%; max-height: 360px; object-fit: contain;"
+                         onerror="this.style.display='none'; document.getElementById('camera-fallback').style.display='block';"
+                         onload="this.style.display='block'; document.getElementById('camera-fallback').style.display='none';">
+                    <div id="camera-fallback" style="padding: 32px 16px; color: var(--text-muted); font-size: 0.85rem;">
+                        <p style="margin-bottom: 6px;">📷 Camera stream offline or connecting...</p>
+                        <p style="font-size: 0.75rem;">Make sure your ESP32-CAM is powered on and streaming to this URL, or run the vision pipeline on port 8080.</p>
+                    </div>
+                </div>
             </div>
 
             <!-- Text Input -->
@@ -512,8 +539,42 @@
         let audioChunks = [];
         let sessionActive = false;
 
+        let cameraVisible = true;
+
+        // ─── Camera Helpers ────────────────────────────
+        function connectCameraStream() {
+            const input = document.getElementById('camera-stream-url');
+            const img = document.getElementById('doorbell-camera-img');
+            if (input && img) {
+                const url = input.value.trim();
+                localStorage.setItem('esp32_cam_url', url);
+                img.src = url + (url.includes('?') ? '&' : '?') + 't=' + Date.now();
+                img.style.display = 'block';
+                document.getElementById('camera-fallback').style.display = 'none';
+            }
+        }
+
+        function toggleCameraView() {
+            const container = document.getElementById('camera-container');
+            const btn = document.getElementById('btn-cam-view');
+            cameraVisible = !cameraVisible;
+            if (container) {
+                container.style.display = cameraVisible ? 'flex' : 'none';
+            }
+            if (btn) {
+                btn.textContent = cameraVisible ? 'Hide View' : 'Show View';
+            }
+        }
+
         // ─── Init ──────────────────────────────────────
         document.addEventListener('DOMContentLoaded', async () => {
+            const savedUrl = localStorage.getItem('esp32_cam_url');
+            if (savedUrl) {
+                const input = document.getElementById('camera-stream-url');
+                const img = document.getElementById('doorbell-camera-img');
+                if (input) input.value = savedUrl;
+                if (img) img.src = savedUrl;
+            }
             await checkHealth();
             await refreshStatus();
         });
@@ -531,6 +592,26 @@
             }
         }
 
+        // ─── Audio Device Selector Helpers ───────────────
+        function getAudioDevice() {
+            const el = document.getElementById('audio-device-selector');
+            return el ? el.value : 'laptop';
+        }
+
+        function onAudioDeviceChange() {
+            const dev = getAudioDevice();
+            const micLabel = document.getElementById('mic-label');
+            if (dev === 'esp32') {
+                micLabel.textContent = 'Click to record via ESP32 (INMP441)';
+                document.getElementById('status-mic').textContent = 'Mic: ESP32 ready';
+                addSystemMsg('Audio switched to ESP32: INMP441 Microphone + MAX98357A Loudspeaker.');
+            } else {
+                micLabel.textContent = 'Click to start recording';
+                document.getElementById('status-mic').textContent = 'Mic: off';
+                addSystemMsg('Audio switched to Computer: Browser Microphone & Speaker.');
+            }
+        }
+
         // ─── Session Management ────────────────────────
         async function startSession() {
             try {
@@ -543,25 +624,41 @@
                 clearChat();
                 addSystemMsg('New session started. The assistant will greet the visitor.');
 
-                // Now fetch the audio greeting
-                // Send an empty wav file to trigger the audio response logic
-                const emptyAudio = new Blob([], { type: 'audio/wav' });
-                const formData = new FormData();
-                formData.append('file', emptyAudio, 'empty.wav');
-                
-                const audioRes = await fetch(`${API}/api/test/audio`, {
-                    method: 'POST',
-                    body: formData
-                });
-                
-                if (audioRes.ok) {
-                    const audioBlob = await audioRes.blob();
-                    const audioUrl = URL.createObjectURL(audioBlob);
-                    const audioEl = new Audio(audioUrl);
-                    audioEl.play();
+                const targetSpeaker = getAudioDevice();
+                if (targetSpeaker === 'esp32') {
+                    const audioRes = await fetch(`${API}/api/test/esp32/greeting`, { method: 'POST' });
+                    if (audioRes.ok) {
+                        const greetData = await audioRes.json();
+                        if (greetData.response_text) {
+                            addAssistantMsg(greetData.response_text);
+                        }
+                        if (greetData.played_on_esp32) {
+                            addSystemMsg('🔊 Greeting played on ESP32 MAX98357A speaker.');
+                        } else {
+                            addSystemMsg('⚠️ ESP32 speaker playback failed.');
+                        }
+                    } else {
+                        addSystemMsg('Failed to generate ESP32 greeting.');
+                    }
+                } else {
+                    const emptyAudio = new Blob([], { type: 'audio/wav' });
+                    const formData = new FormData();
+                    formData.append('file', emptyAudio, 'empty.wav');
+                    
+                    const audioRes = await fetch(`${API}/api/test/audio?target_speaker=laptop`, {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (audioRes.ok) {
+                        const audioBlob = await audioRes.blob();
+                        const audioUrl = URL.createObjectURL(audioBlob);
+                        addAssistantMsgWithAudio('Greeting visitor, please state your name and the purpose of your visit.', audioUrl);
+                        const audioEl = new Audio(audioUrl);
+                        audioEl.play().catch(() => {});
+                    }
                 }
 
-                await sendTextDirect('');
                 await refreshStatus();
             } catch (e) {
                 addSystemMsg('Failed to start session: ' + e.message);
@@ -628,13 +725,21 @@
             sendBtn.disabled = true;
 
             try {
-                const res = await fetch(`${API}/api/test/text?text=${encodeURIComponent(text)}`, {
+                const targetSpeaker = getAudioDevice();
+                const res = await fetch(`${API}/api/test/text?text=${encodeURIComponent(text)}&target_speaker=${targetSpeaker}`, {
                     method: 'POST'
                 });
                 const data = await res.json();
 
                 if (data.response_text) {
                     addAssistantMsg(data.response_text);
+                    if (targetSpeaker === 'esp32' && data.audio_available) {
+                        if (data.played_on_esp32) {
+                            addSystemMsg('🔊 Audio played via ESP32 MAX98357A speaker.');
+                        } else {
+                            addSystemMsg('⚠️ Audio playback failed on ESP32 speaker.');
+                        }
+                    }
                 }
 
                 await refreshStatus();
@@ -656,15 +761,19 @@
 
         async function startRecording() {
             try {
-                const micType = document.getElementById('mic-selector').value;
+                const micType = getAudioDevice();
                 if (micType === 'esp32') {
-                    // Start ESP32 UDP recording on the backend
-                    await fetch(`${API}/api/test/esp32/start`, { method: 'POST' });
+                    // Start ESP32 UART/I2S recording on the backend
+                    const res = await fetch(`${API}/api/test/esp32/start`, { method: 'POST' });
+                    if (!res.ok) {
+                        const err = await res.json();
+                        throw new Error(err.detail || "Failed to start ESP32");
+                    }
                     isRecording = true;
                     
                     const btn = document.getElementById('mic-btn');
                     btn.classList.add('recording');
-                    document.getElementById('mic-label').textContent = 'Recording from ESP32... Click to stop';
+                    document.getElementById('mic-label').textContent = 'Recording from ESP32 INMP441... Click to stop';
                     setDot('dot-mic', 'active');
                     document.getElementById('status-mic').textContent = 'Mic: ESP32 active';
                     return;
@@ -709,7 +818,7 @@
         }
 
         async function stopRecording() {
-            const micType = document.getElementById('mic-selector').value;
+            const micType = getAudioDevice();
             
             if (micType === 'esp32') {
                 isRecording = false;
@@ -758,7 +867,8 @@
                 const formData = new FormData();
                 formData.append('file', wavBlob, 'recording.wav');
 
-                const res = await fetch(`${API}/api/test/audio`, {
+                const targetSpeaker = getAudioDevice();
+                const res = await fetch(`${API}/api/test/audio?target_speaker=${targetSpeaker}`, {
                     method: 'POST',
                     body: formData,
                 });
@@ -775,9 +885,13 @@
                     const audioUrl = URL.createObjectURL(audioResponseBlob);
                     addAssistantMsgWithAudio('', audioUrl);
 
-                    // Auto-play response
-                    const audio = new Audio(audioUrl);
-                    audio.play().catch(() => {});
+                    // Auto-play response on laptop ONLY if laptop speaker is selected
+                    if (targetSpeaker === 'laptop') {
+                        const audio = new Audio(audioUrl);
+                        audio.play().catch(() => {});
+                    } else {
+                        addSystemMsg('🔊 Audio played via ESP32 MAX98357A speaker.');
+                    }
                 } else {
                     const errText = await res.text();
                     addSystemMsg('Server error: ' + errText);
@@ -797,7 +911,8 @@
 
         async function processEsp32Audio() {
             try {
-                const res = await fetch(`${API}/api/test/esp32/stop`, {
+                const targetSpeaker = getAudioDevice();
+                const res = await fetch(`${API}/api/test/esp32/stop?target_speaker=${targetSpeaker}`, {
                     method: 'POST',
                 });
 
@@ -806,16 +921,25 @@
                     if (transcript) {
                         addVisitorMsg('🎙 ' + transcript);
                     } else {
-                        addVisitorMsg('🎙 [Audio from ESP32]');
+                        addVisitorMsg('🎙 [Audio from ESP32 INMP441]');
                     }
 
                     const audioResponseBlob = await res.blob();
                     const audioUrl = URL.createObjectURL(audioResponseBlob);
                     addAssistantMsgWithAudio('', audioUrl);
 
-                    // Auto-play response
-                    const audio = new Audio(audioUrl);
-                    audio.play().catch(() => {});
+                    // Auto-play response on laptop ONLY if laptop speaker is selected
+                    if (targetSpeaker === 'laptop') {
+                        const audio = new Audio(audioUrl);
+                        audio.play().catch(() => {});
+                    } else {
+                        const played = res.headers.get('X-Played-Success');
+                        if (played === 'True') {
+                            addSystemMsg('🔊 Audio played directly on ESP32 MAX98357A speaker.');
+                        } else {
+                            addSystemMsg('⚠️ Audio playback failed on ESP32 MAX98357A speaker.');
+                        }
+                    }
                 } else {
                     const errText = await res.text();
                     addSystemMsg('Server error: ' + errText);
